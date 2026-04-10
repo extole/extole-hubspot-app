@@ -1,19 +1,22 @@
-const { Client } = require('@hubspot/api-client');
-
+// Uses native fetch (Node 18) — no npm deps needed
 exports.main = async (context) => {
+  const token = context.secrets.PRIVATE_APP_TOKEN;
   const results = {
     hubspot_crm_api: null,
     extole_external_api: null,
   };
 
-  // Test 1: HubSpot CRM API (contacts search)
-  // Uses the private app access token from secrets
+  // Test 1: HubSpot CRM API
   try {
-    const client = new Client({ accessToken: context.secrets.PRIVATE_APP_TOKEN });
-    const response = await client.crm.contacts.basicApi.getPage(1);
+    const response = await fetch(
+      'https://api.hubapi.com/crm/v3/objects/contacts?limit=1',
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const data = await response.json();
     results.hubspot_crm_api = {
-      ok: true,
-      count: response.results?.length ?? 0,
+      ok: response.ok,
+      status: response.status,
+      count: data.results?.length ?? 0,
     };
   } catch (err) {
     results.hubspot_crm_api = { ok: false, error: err.message };

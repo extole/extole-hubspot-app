@@ -194,3 +194,26 @@ Friend email is sent in Extole's register call (Extole's primary identity key) b
 - Deal-specific property configuration in Event Configurator UI (admin configures Deal workflows manually)
 - Write-back Configurator (V2)
 - Marketplace distribution (private app, direct install only)
+
+---
+
+## Developer Testing
+
+**Use the Extole CLI. Not curl.**
+
+The `extole` CLI (`~/.npm-global/bin/extole`) eliminates most manual testing steps:
+
+```bash
+extole ping                                      # verify credentials + connectivity
+extole events fire <event_name> --email <e> \
+  -p contact_id=123 -p app_type=hubspot_crm \
+  --sandbox --dry-run                            # inspect payload before firing
+extole events fire <event_name> --email <e> \
+  -p app_type=hubspot_crm --sandbox --watch      # fire + tail downstream for 15s
+extole stream --app-type hubspot_crm --sandbox   # live stream all hubspot_crm events
+extole person get --email <e>                    # verify person record was created
+```
+
+This covers payload shape, auth, event names, and real-time Extole receipt — no browser,
+no HubSpot UI, no manual contact creation. The only step the CLI can't replace is
+verifying the HubSpot workflow creation schema (one browser click).

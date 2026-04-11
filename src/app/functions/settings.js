@@ -13,38 +13,6 @@ const { testConnection, fireEvent } = require('./extole');
 const HS_API_BASE = 'https://api.hubapi.com';
 const BATCH_SIZE = 50;
 
-// Workflows we manage — keyed by a stable name prefix we can match on
-const WORKFLOW_CONFIGS = {
-  contact_created: {
-    name: 'Extole — Contact Created',
-    eventName: 'hubspot_contact_created',
-    // HubSpot workflow token syntax for contact properties
-    bodyTemplate: (eventName) => JSON.stringify({
-      event_name: eventName,
-      data: {
-        email: '{{contact.email}}',
-        contact_id: '{{contact.hs_object_id}}',
-        first_name: '{{contact.firstname}}',
-        last_name: '{{contact.lastname}}',
-        app_type: 'hubspot_crm',
-      },
-    }),
-  },
-  deal_closed_won: {
-    name: 'Extole — Deal Closed Won',
-    eventName: 'hubspot_deal_closed_won',
-    bodyTemplate: (eventName) => JSON.stringify({
-      event_name: eventName,
-      data: {
-        deal_id: '{{deal.hs_object_id}}',
-        deal_name: '{{deal.dealname}}',
-        amount: '{{deal.amount}}',
-        close_date: '{{deal.closedate}}',
-        app_type: 'hubspot_crm',
-      },
-    }),
-  },
-};
 
 exports.main = async (context) => {
   const hsToken = context.secrets.PRIVATE_APP_TOKEN;
@@ -190,15 +158,27 @@ async function handleGetWorkflows(hsToken) {
   return { workflows: extoleWorkflows };
 }
 
-async function handleCreateWorkflow(hsToken, extoleToken, { workflowType }) {
-  const config = WORKFLOW_CONFIGS[workflowType];
-  if (!config) return { error: `Unknown workflowType: ${workflowType}` };
+async function handleCreateWorkflow(hsToken, extoleToken, { eventName, triggerObject, fieldMappings }) {
   if (!extoleToken) return { error: 'EXTOLE_API_TOKEN secret not configured' };
+  if (!eventName) return { error: 'eventName is required' };
 
-  const requestBody = config.bodyTemplate(config.eventName);
+  const obj = triggerObject || 'contact';
+
+  // Build the Extole event payload from user-defined field mappings.
+  // Property mappings become HubSpot token syntax: {{contact.email}}
+  // Static mappings are passed through as literal strings.
+  const data = { app_type: 'hubspot_crm' };
+  for (const mapping of (fieldMappings || [])) {
+    if (!mapping.extoleKey) continue;
+    data[mapping.extoleKey] = mapping.source === 'static'
+      ? mapping.value
+      : `{{${obj}.${mapping.value}}}`;
+  }
+
+  const requestBody = JSON.stringify({ event_name: eventName, data });
 
   const workflow = {
-    name: config.name,
+    name: `Extole — ${eventName}`,
     type: 'DRIP_DELAY',
     enabled: false,
     onlyEnrollsManually: false,
@@ -222,17 +202,10 @@ async function handleCreateWorkflow(hsToken, extoleToken, { workflowType }) {
   const responseData = await res.json().catch(() => ({}));
 
   if (!res.ok) {
-    return {
-      error: responseData.message || `HTTP ${res.status}`,
-      details: responseData,
-    };
+    return { error: responseData.message || `HTTP ${res.status}`, details: responseData };
   }
 
-  return {
-    workflowId: responseData.id,
-    name: responseData.name,
-    portalId: responseData.portalId,
-  };
+  return { workflowId: responseData.id, name: responseData.name };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

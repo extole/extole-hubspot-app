@@ -18,6 +18,42 @@ const DEFAULT_HUBSPOTUTK_PROPERTY = 'extole_hubspotutk';
 const DEFAULT_ADVOCATE_CODE_PROPERTY = 'extole_advocate_code';
 const DEFAULT_REFERRAL_URL_PARAM = 'extole_ref';
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type FieldMapping = { extoleKey: string; source: 'property' | 'static'; value: string };
+
+type EventFormState = {
+  eventName: string;
+  triggerObject: 'contact' | 'deal';
+  fieldMappings: FieldMapping[];
+};
+
+type WorkflowInfo = { id: number; name: string; enabled: boolean };
+
+// ─── Default field mappings ───────────────────────────────────────────────────
+
+const CONTACT_DEFAULTS: FieldMapping[] = [
+  { extoleKey: 'email', source: 'property', value: 'email' },
+  { extoleKey: 'contact_id', source: 'property', value: 'hs_object_id' },
+  { extoleKey: 'first_name', source: 'property', value: 'firstname' },
+  { extoleKey: 'last_name', source: 'property', value: 'lastname' },
+];
+
+const DEAL_DEFAULTS: FieldMapping[] = [
+  { extoleKey: 'deal_id', source: 'property', value: 'hs_object_id' },
+  { extoleKey: 'deal_name', source: 'property', value: 'dealname' },
+  { extoleKey: 'amount', source: 'property', value: 'amount' },
+  { extoleKey: 'close_date', source: 'property', value: 'closedate' },
+];
+
+const BLANK_EVENT_FORM: EventFormState = {
+  eventName: '',
+  triggerObject: 'contact',
+  fieldMappings: [...CONTACT_DEFAULTS],
+};
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
 function ExtoleSettings() {
   // Connection
   const [connectionStatus, setConnectionStatus] = useState<'unknown' | 'ok' | 'error'>('unknown');
@@ -30,16 +66,16 @@ function ExtoleSettings() {
   const [referralUrlParam, setReferralUrlParam] = useState(DEFAULT_REFERRAL_URL_PARAM);
   const [formTargeting, setFormTargeting] = useState<'all' | 'specific'>('all');
   const [formIds, setFormIds] = useState('');
-  const [propertiesCreated, setPropertiesCreated] = useState(false);
   const [propertiesLoading, setPropertiesLoading] = useState(false);
   const [propertiesResult, setPropertiesResult] = useState<string | null>(null);
 
   // Event Configurator
-  type WorkflowInfo = { id: number; name: string; enabled: boolean };
   const [workflows, setWorkflows] = useState<WorkflowInfo[]>([]);
   const [workflowsLoaded, setWorkflowsLoaded] = useState(false);
-  const [creatingWorkflow, setCreatingWorkflow] = useState<string | null>(null);
-  const [workflowResults, setWorkflowResults] = useState<Record<string, string>>({});
+  const [showEventForm, setShowEventForm] = useState(false);
+  const [eventForm, setEventForm] = useState<EventFormState>(BLANK_EVENT_FORM);
+  const [creatingWorkflow, setCreatingWorkflow] = useState(false);
+  const [createResult, setCreateResult] = useState('');
 
   // Backfill
   const [contactTotal, setContactTotal] = useState<number | null>(null);
@@ -91,7 +127,6 @@ function ExtoleSettings() {
     }).then((res) => {
       const { created = [], errors = [] } = res.response || {};
       if (errors.length === 0) {
-        setPropertiesCreated(true);
         setPropertiesResult(`Created: ${created.map((c: any) => c.property).join(', ') || 'all properties already existed'}`);
       } else {
         setPropertiesResult(`Errors: ${errors.map((e: any) => `${e.property}: ${e.error}`).join('; ')}`);
@@ -163,33 +198,35 @@ function ExtoleSettings() {
     });
   }
 
-  function handleCreateWorkflow(workflowType: string) {
-    setCreatingWorkflow(workflowType);
-    setWorkflowResults(prev => ({ ...prev, [workflowType]: '' }));
+  function handleCreateEventWorkflow() {
+    setCreatingWorkflow(true);
+    setCreateResult('');
     hubspot.runServerlessFunction({
       name: 'extole_settings',
-      parameters: { action: 'createWorkflow', workflowType },
+      parameters: {
+        action: 'createWorkflow',
+        eventName: eventForm.eventName,
+        triggerObject: eventForm.triggerObject,
+        fieldMappings: eventForm.fieldMappings,
+      },
       propertiesToSend: [],
     }).then((res) => {
       if (res.response?.error) {
-        setWorkflowResults(prev => ({ ...prev, [workflowType]: `Error: ${res.response.error}` }));
+        setCreateResult(`Error: ${res.response.error}`);
       } else {
         const { workflowId, name } = res.response || {};
-        setWorkflowResults(prev => ({
-          ...prev,
-          [workflowType]: `Created: "${name}" (ID ${workflowId}) — open it in HubSpot Workflows to set the enrollment trigger, then enable it.`,
-        }));
-        // Refresh workflow list
+        setCreateResult(`Created "${name}" (ID ${workflowId}) — open in HubSpot Workflows, set the enrollment trigger, then enable it.`);
+        setShowEventForm(false);
+        setEventForm(BLANK_EVENT_FORM);
         handleLoadWorkflows();
       }
     }).catch((err) => {
-      setWorkflowResults(prev => ({ ...prev, [workflowType]: `Error: ${err.message}` }));
+      setCreateResult(`Error: ${err.message}`);
     }).finally(() => {
-      setCreatingWorkflow(null);
+      setCreatingWorkflow(false);
     });
   }
 
-  // Load workflows on first render
   useEffect(() => {
     handleLoadWorkflows();
   }, []);
@@ -298,34 +335,43 @@ function ExtoleSettings() {
       {/* ── Event Configuration ── */}
       <Text format={{ fontWeight: 'bold' }}>Event Configuration</Text>
       <Text>
-        Create HubSpot Workflows that fire CRM events to Extole. Each workflow is pre-configured
-        with the correct endpoint, authorization header, and payload — you just need to set the
-        enrollment trigger and enable it.
+        Create HubSpot Workflows that fire events to Extole. Choose any event name your
+        Extole program expects, pick a trigger object, and map HubSpot properties to
+        Extole data fields. Workflows are pre-wired with the correct endpoint and auth.
       </Text>
 
       {!workflowsLoaded && <LoadingSpinner label="Loading workflows..." showLabel />}
 
       {workflowsLoaded && (
         <>
-          <WorkflowRow
-            label="Contact Created"
-            description="Fires hubspot_contact_created when a new contact is added. Set enrollment trigger to: Contact is created."
-            workflowName="Extole — Contact Created"
-            existingWorkflows={workflows}
-            creating={creatingWorkflow === 'contact_created'}
-            result={workflowResults['contact_created'] ?? ''}
-            onCreate={() => handleCreateWorkflow('contact_created')}
-          />
+          {workflows.map((w) => (
+            <Flex direction="row" gap="small" alignItems="center" justifyContent="space-between">
+              <Flex direction="column" gap="extra-small">
+                <Text format={{ fontWeight: 'bold' }}>{w.name}</Text>
+                <Text>{w.enabled ? 'Active' : 'Not enabled'} · Workflow ID {w.id}</Text>
+              </Flex>
+            </Flex>
+          ))}
 
-          <WorkflowRow
-            label="Deal Closed Won"
-            description="Fires hubspot_deal_closed_won when a deal reaches Closed Won. Set enrollment trigger to: Deal stage is Closed Won."
-            workflowName="Extole — Deal Closed Won"
-            existingWorkflows={workflows}
-            creating={creatingWorkflow === 'deal_closed_won'}
-            result={workflowResults['deal_closed_won'] ?? ''}
-            onCreate={() => handleCreateWorkflow('deal_closed_won')}
-          />
+          {workflows.length > 0 && !showEventForm && <Divider />}
+
+          {!showEventForm ? (
+            <>
+              {createResult && <Text>{createResult}</Text>}
+              <Button onClick={() => { setShowEventForm(true); setCreateResult(''); }}>
+                + Add Event
+              </Button>
+            </>
+          ) : (
+            <EventForm
+              form={eventForm}
+              onChange={setEventForm}
+              onSubmit={handleCreateEventWorkflow}
+              onCancel={() => { setShowEventForm(false); setCreateResult(''); }}
+              creating={creatingWorkflow}
+              createResult={createResult}
+            />
+          )}
         </>
       )}
 
@@ -368,49 +414,132 @@ function ExtoleSettings() {
   );
 }
 
-// ─── WorkflowRow ─────────────────────────────────────────────────────────────
+// ─── Event Form ───────────────────────────────────────────────────────────────
 
-function WorkflowRow({
-  label,
-  description,
-  workflowName,
-  existingWorkflows,
+function EventForm({
+  form,
+  onChange,
+  onSubmit,
+  onCancel,
   creating,
-  result,
-  onCreate,
+  createResult,
 }: {
-  label: string;
-  description: string;
-  workflowName: string;
-  existingWorkflows: { id: number; name: string; enabled: boolean }[];
+  form: EventFormState;
+  onChange: (f: EventFormState) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
   creating: boolean;
-  result: string;
-  onCreate: () => void;
+  createResult: string;
 }) {
-  const existing = existingWorkflows.find(w => w.name === workflowName);
+  function setEventName(v: string) {
+    onChange({ ...form, eventName: v });
+  }
+
+  function setTriggerObject(v: string) {
+    const obj = v as 'contact' | 'deal';
+    onChange({
+      ...form,
+      triggerObject: obj,
+      fieldMappings: obj === 'deal' ? [...DEAL_DEFAULTS] : [...CONTACT_DEFAULTS],
+    });
+  }
+
+  function updateMapping(index: number, field: keyof FieldMapping, value: string) {
+    const updated = form.fieldMappings.map((m, i) =>
+      i === index ? { ...m, [field]: value } : m
+    );
+    onChange({ ...form, fieldMappings: updated });
+  }
+
+  function addMapping() {
+    onChange({
+      ...form,
+      fieldMappings: [...form.fieldMappings, { extoleKey: '', source: 'property', value: '' }],
+    });
+  }
+
+  function removeMapping(index: number) {
+    onChange({
+      ...form,
+      fieldMappings: form.fieldMappings.filter((_, i) => i !== index),
+    });
+  }
+
+  const canSubmit = !!form.eventName.trim() && !creating;
 
   return (
-    <Flex direction="column" gap="extra-small">
-      <Flex direction="row" gap="small" alignItems="center" justifyContent="space-between">
-        <Flex direction="column" gap="extra-small">
-          <Text format={{ fontWeight: 'bold' }}>{label}</Text>
-          <Text>{description}</Text>
-          {existing && (
-            <Text>
-              {existing.enabled ? 'Active' : 'Created — not yet enabled'} (Workflow ID: {existing.id})
-            </Text>
-          )}
+    <>
+      <Input
+        label="Event name"
+        name="eventName"
+        value={form.eventName}
+        onChange={setEventName}
+        placeholder="e.g. purchase, referral_sent, account_upgrade"
+        description="The exact Extole event name your program expects."
+      />
+
+      <Select
+        label="Trigger object"
+        name="triggerObject"
+        value={form.triggerObject}
+        onChange={setTriggerObject}
+        options={[
+          { label: 'Contact', value: 'contact' },
+          { label: 'Deal', value: 'deal' },
+        ]}
+        description="Set the workflow enrollment trigger in HubSpot to match (e.g. Contact is created, Deal stage = Closed Won)."
+      />
+
+      <Text format={{ fontWeight: 'bold' }}>Field Mappings</Text>
+      <Text>
+        Map Extole parameter names to HubSpot property internal names.
+        Use the internal name exactly as it appears in HubSpot (e.g. email, firstname, hs_object_id).
+        Static values are passed through as literals.
+      </Text>
+
+      {form.fieldMappings.map((mapping, i) => (
+        <Flex direction="row" gap="small" alignItems="flex-end">
+          <Input
+            label="Extole key"
+            name={`ek_${i}`}
+            value={mapping.extoleKey}
+            onChange={(v) => updateMapping(i, 'extoleKey', v)}
+            placeholder="e.g. email"
+          />
+          <Select
+            label="Source"
+            name={`src_${i}`}
+            value={mapping.source}
+            onChange={(v) => updateMapping(i, 'source', v as 'property' | 'static')}
+            options={[
+              { label: 'Property', value: 'property' },
+              { label: 'Static', value: 'static' },
+            ]}
+          />
+          <Input
+            label={mapping.source === 'property' ? 'HubSpot property' : 'Static value'}
+            name={`val_${i}`}
+            value={mapping.value}
+            onChange={(v) => updateMapping(i, 'value', v)}
+            placeholder={mapping.source === 'property' ? 'e.g. email' : 'e.g. hubspot_crm'}
+          />
+          <Button onClick={() => removeMapping(i)}>−</Button>
         </Flex>
-        <Button
-          onClick={onCreate}
-          disabled={creating || !!existing}
-          size="small"
-        >
-          {creating ? 'Creating...' : existing ? 'Created' : 'Create Workflow'}
+      ))}
+
+      <Button onClick={addMapping}>+ Add field</Button>
+
+      {createResult && <Text>{createResult}</Text>}
+
+      <Flex direction="row" gap="small">
+        <Button onClick={onSubmit} disabled={!canSubmit} variant="primary">
+          {creating ? 'Creating...' : 'Create Workflow'}
+        </Button>
+        <Button onClick={onCancel} disabled={creating}>
+          Cancel
         </Button>
       </Flex>
-      {result && <Text>{result}</Text>}
-    </Flex>
+    </>
   );
 }
 

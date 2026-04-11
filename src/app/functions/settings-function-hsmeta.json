@@ -1,0 +1,8 @@
+{
+  "uid": "extole_settings",
+  "type": "app-function",
+  "config": {
+    "entrypoint": "/app/functions/settings.js",
+    "secretKeys": ["PRIVATE_APP_TOKEN", "EXTOLE_API_TOKEN"]
+  }
+}

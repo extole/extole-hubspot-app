@@ -1,0 +1,8 @@
+{
+  "uid": "extole_dispatch",
+  "type": "app-function",
+  "config": {
+    "entrypoint": "/app/functions/dispatch.js",
+    "secretKeys": ["EXTOLE_API_TOKEN"]
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "uid": "extole_settings_page",
+  "type": "settings",
+  "config": {
+    "entrypoint": "/app/settings/Settings.tsx"
+  }
+}

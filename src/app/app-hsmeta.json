@@ -1,9 +1,9 @@
 {
-  "uid": "extole_hs_spike_app",
+  "uid": "extole_hs_app",
   "type": "app",
   "config": {
-    "description": "An example to demonstrate how to build a static private app with developer projects.",
-    "name": "extole-hs-spike-App",
+    "description": "Connects HubSpot to Extole's referral platform. Captures referral attribution at form submission, fires CRM events to Extole, and supports bulk contact enrollment.",
+    "name": "Extole",
     "distribution": "private",
     "auth": {
       "type": "static",
@@ -11,6 +11,8 @@
         "oauth",
         "crm.objects.contacts.read",
         "crm.objects.contacts.write",
+        "crm.schemas.contacts.read",
+        "crm.schemas.contacts.write",
         "automation"
       ],
       "optionalScopes": [],
@@ -25,10 +27,10 @@
       "img": []
     },
     "support": {
-      "supportEmail": "support@example.com",
-      "documentationUrl": "https://example.com/docs",
-      "supportUrl": "https://example.com/support",
-      "supportPhone": "+18005555555"
+      "supportEmail": "support@extole.com",
+      "documentationUrl": "https://docs.extole.com",
+      "supportUrl": "https://docs.extole.com",
+      "supportPhone": ""
     }
   }
 }

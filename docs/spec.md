@@ -2,15 +2,16 @@
 
 ## What it does
 
-Connects HubSpot to Extole's referral platform. The app has four features that together close the full referral loop: instrumenting the friend's journey into the CRM, triggering Extole events on record changes, writing Extole data back into HubSpot, and seeding existing contacts at install time.
+Connects HubSpot to Extole's referral platform. The app has three V1 features that together close the referral loop: instrumenting the friend's journey into the CRM, triggering Extole events on record changes, and seeding existing contacts at install time.
 
 ---
 
 ## Prerequisites
 
-- **Data Hub Professional or higher** — required for serverless functions (app functions) and webhook workflow triggers. Starter tier cannot run this app.
+- **Data Hub Professional or higher** — required for serverless app functions. Starter tier cannot run this app. (Note: docs are inconsistent on whether Enterprise is required for UI extensions — needs partner team confirmation.)
 - **Extole core.js** deployed on the client's website — standard for all Extole customers
-- **HubSpot-embedded forms** on the client's site — native HubSpot forms only (not Typeform, Marketo, etc.)
+- **HubSpot tracking script** deployed on all pages of the client's site — required for `hubspotutk` to be set before the Form Configurator snippet runs
+- **HubSpot-embedded forms** on the client's site — native HubSpot forms only (not Typeform, Marketo, etc.). Clients not using HubSpot-native forms can skip the Form Configurator and use the Event Configurator alone.
 
 ---
 
@@ -33,15 +34,15 @@ Extole's `core.js` is already deployed first-party on the client's site. When a 
 ```
 Friend clicks share link
   → lands on client site (Extole core.js + HubSpot tracking both present)
-  → HubSpot sets hubspotutk (visitor cookie, consistent across all pages)
+  → HubSpot sets hubspotutk (visitor cookie, consistent across all pages of this visit)
   → core.js fires landing event to Extole: { advocate_code, hubspotutk }
   → Extole establishes: this hubspotutk visitor was referred by this advocate
 
 Friend navigates site (may visit multiple pages before converting)
 
 Friend reaches a HubSpot form and submits it
-  → Form Configurator snippet injects hubspotutk into hidden Contact property field
-  → (Optional) snippet also injects advocate code into separate hidden field
+  → Form Configurator snippet reads hubspotutk from cookie, injects into hidden Contact property field
+  → (Optional) snippet reads advocate code from landing URL param, injects into separate hidden field
 
 HubSpot creates Contact with hubspotutk stored as property
   → Event Configurator fires "Contact Created" to Extole:
@@ -59,15 +60,14 @@ Downstream events include contact_id through pipeline
 |---|---|
 | **HubSpot form targeting** | All forms, or a specific list of form IDs |
 | **hubspotutk property** | Contact property to store the visitor ID (auto-created at setup) |
-| **Advocate code property** | Optional — Contact property to store advocate code for HubSpot reporting |
+| **Advocate code property** | Optional — Contact property to store advocate code for direct HubSpot reporting |
 
-The snippet is generated from these settings and provided as a copy-paste embed for the client's site.
+The snippet is generated from these settings and provided as a copy-paste embed for the client's site. The snippet must load after the HubSpot tracking script so that `hubspotutk` is set before it runs.
 
 ### Open Questions
 
-1. **Extole JS API** — exact call to retrieve current advocate/referral code from core.js at form submission time (for optional advocate code injection). Needs Extole eng confirmation.
-2. **Register call fields** — which fields does Extole require/support in the identity register call: email required, contact_id as supplementary key?
-3. **hubspotutk property auto-creation** — should the app create the custom Contact property at install, or require admin setup?
+1. **Register call fields** — which fields does Extole require/support in the identity register call: email required, contact_id as supplementary key?
+2. **hubspotutk property auto-creation** — should the app create the custom Contact property at install, or require admin setup?
 
 ---
 
@@ -75,7 +75,7 @@ The snippet is generated from these settings and provided as a copy-paste embed 
 
 ### What it does
 
-Lets admins define record-triggered events that fire to Extole when HubSpot records change. No code required — the app registers the necessary HubSpot Workflow webhook triggers automatically.
+Lets admins define record-triggered events that fire to Extole when HubSpot records change. The app registers a Custom Workflow Action — the admin creates the workflow trigger condition themselves in HubSpot's workflow builder; the app owns the action step that calls Extole.
 
 ### Core use cases
 
@@ -87,17 +87,18 @@ Lets admins define record-triggered events that fire to Extole when HubSpot reco
 
 ### Architecture
 
-Each event config creates a HubSpot Workflow with:
-1. An enrollment trigger (record change condition)
-2. A webhook action that POSTs to Extole with configured properties
+The app defines a **Custom Workflow Action** (via `workflow-actions/*-hsmeta.json`) that appears in HubSpot's workflow builder under the Extole app. The admin:
+1. Creates a HubSpot Workflow with an enrollment trigger of their choice
+2. Adds the Extole action step, configuring which Contact/Deal properties to send
 
-Workflows are created/deleted via the HubSpot Workflows API, called from the app's serverless function.
+The action calls the app's serverless function endpoint, which forwards the payload to Extole with the configured event name and properties.
 
-### Webhook slot constraint
+This approach is architecturally cleaner than programmatically creating full workflow objects:
+- The admin owns the trigger logic; the app owns only the action
+- No workflow objects are created or deleted on the customer's behalf
+- Custom Workflow Actions are not subject to the per-account webhook slot limit (10 at Data Hub Professional, 100 at Enterprise) that applies to the built-in "Send a webhook" workflow action
 
-Data Hub Professional includes 10 webhook workflow triggers per account. Enterprise includes 100. Clients may already have some slots in use for other integrations.
-
-The app must display available webhook slots in the Event Configurator UI before creating a new config. Minimum viable install requires 2 slots (Contact Created + Deal Closed Won).
+**Deal Closed Won** is supported via this same mechanism — the admin creates a Deal-based workflow with a Closed Won trigger and adds the Extole action. Deal-specific property configuration in the Event Configurator UI is V2.
 
 ### Event config states
 
@@ -110,7 +111,28 @@ The app must display available webhook slots in the Event Configurator UI before
 
 ---
 
-## Feature 3 — Write-back Configurator
+## Feature 3 — Backfill / Bulk Enroll
+
+### What it does
+
+Seeds existing HubSpot Contacts into Extole at install time. The Event Configurator covers net-new contacts going forward, but a fresh install leaves the existing contact base dark to Extole.
+
+### Architecture
+
+Admin-triggered bulk operation from the app UI. The serverless function pages through HubSpot Contacts in batches and sends each to Extole using the same event/identity API as the Event Configurator.
+
+**Scale constraint:** HubSpot serverless functions have a 15-second execution timeout. Large contact bases cannot be processed in a single function invocation. The backfill must use a chunked/polling pattern — the function processes a batch, stores a cursor, and the UI polls for completion — or is scoped to portals under a contact threshold with the limitation documented.
+
+### UI requirements
+
+- Show count of contacts to be enrolled before triggering
+- Progress indicator during run (polling pattern)
+- Summary on completion (enrolled, skipped, errors)
+- Idempotent — safe to re-run
+
+---
+
+## Feature 4 — Write-back Configurator (V2)
 
 ### What it does
 
@@ -127,26 +149,9 @@ Writes Extole data back into HubSpot Contact properties. Closes the loop from th
 
 ### Architecture
 
-Extole outbound webhook → HubSpot Contacts API (serverless function). Admin configures which Extole events trigger which HubSpot property updates and on which object (Contact, Deal).
+Extole outbound webhook → app serverless function → HubSpot Contacts API. Admin configures which Extole events trigger which HubSpot property updates. Inbound webhook authentication (HMAC or shared secret) required.
 
----
-
-## Feature 4 — Backfill / Bulk Enroll
-
-### What it does
-
-Seeds existing HubSpot Contacts into Extole at install time. The Event Configurator covers net-new contacts going forward, but a fresh install leaves the existing contact base dark to Extole.
-
-### Architecture
-
-Admin-triggered bulk operation from the app UI — a single "Enroll existing contacts" button on the onboarding/settings screen. The serverless function pages through HubSpot Contacts and sends each to Extole using the same event/identity API as the Event Configurator.
-
-### UI requirements
-
-- Show count of contacts to be enrolled before triggering
-- Progress indicator during run
-- Summary on completion (enrolled, skipped, errors)
-- Idempotent — safe to re-run
+**Deferred to V2** — depends on the inbound pipeline (Features 1–2) being proven first.
 
 ---
 
@@ -162,15 +167,23 @@ Friend email is sent in Extole's register call (Extole's primary identity key) b
 
 ---
 
+## Known Limitations
+
+- **Cross-device attribution** — `hubspotutk` is session-scoped to a single browser. A friend who clicks a share link on mobile and converts on desktop gets a new `hubspotutk`; the advocate association is lost. No viable cross-device solution exists for V1; document as a known gap.
+- **HubSpot-native forms required** — the Form Configurator only instruments HubSpot JS-embedded forms. Clients using Marketo, Pardot, or custom HTML forms cannot use Feature 1. They can still use the Event Configurator (Features 2–3) for downstream events; referral attribution requires the standard Extole onboarding path. Flag in sales qualification for prospects with non-HubSpot primary conversion forms.
+- **HubSpot JS embed only** — the Form Configurator snippet requires the HubSpot JS embed variant (fires `onFormSubmit`). The iframe embed variant does not expose JS hooks and is not supported.
+
+---
+
 ## Installation
 
 1. Deploy the app to the HubSpot portal
-2. Install the app (OAuth authorization flow)
-3. Deploy Extole core.js on client site (if not already present)
-4. Configure Event Configurator — minimum: Contact Created + Deal Closed Won
-5. Embed Form Configurator snippet on client site
-6. Run Backfill to enroll existing contacts
-7. Configure Write-back as needed
+2. Install the app (private app token — static auth, no OAuth flow)
+3. Add Extole API credentials in app settings
+4. Deploy Extole core.js on client site (if not already present)
+5. Configure Event Configurator — create HubSpot Workflows using the Extole Custom Workflow Action; minimum: Contact Created + Deal Closed Won
+6. Embed Form Configurator snippet on client site (load after HubSpot tracking script)
+7. Run Backfill to enroll existing contacts
 
 ---
 
@@ -178,5 +191,6 @@ Friend email is sent in Extole's register call (Extole's primary identity key) b
 
 - Non-HubSpot forms (Typeform, Marketo, custom HTML forms)
 - Multi-touch referral attribution
-- Deals/Companies objects in Event Configurator (Contacts only for V1)
+- Deal-specific property configuration in Event Configurator UI (admin configures Deal workflows manually)
+- Write-back Configurator (V2)
 - Marketplace distribution (private app, direct install only)

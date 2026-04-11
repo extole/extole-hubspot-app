@@ -16,9 +16,9 @@ Without instrumentation, the advocate code is invisible to HubSpot and the refer
 Extole's `core.js` is already deployed first-party on the client's site. When a friend arrives via a share link, core.js captures the referral context and maintains it in a first-party session (via access token / cookie scoped to the client's base domain).
 
 The Form Configurator adds a thin JS snippet to the client's site that:
-1. On any page with a configured HubSpot form: calls Extole's JS API to retrieve the current referral context
-2. Injects the advocate code into a hidden field on the form
-3. The form submits with the advocate code included → Lead/Contact is created in HubSpot with the referral attribution on record
+1. Reads `hubspotutk` from the browser cookie (set by HubSpot's tracking script) and injects it into a hidden field on configured HubSpot forms
+2. Optionally reads the Extole advocate code from the landing page URL parameter and injects it into a separate hidden field
+3. The form submits with both values → Contact is created in HubSpot with hubspotutk stored for Extole lookup, and optionally with the advocate code for direct HubSpot reporting
 
 **Cross-page persistence is handled by Extole core.js** — since it's first-party and session-scoped to the client's base domain, the referral context survives navigation. The friend does not need to convert on the landing page.
 
@@ -75,11 +75,10 @@ Optional enrichment: if advocate code is also injected into a hidden form field
 
 ## Open Questions
 
-1. **Extole JS API** — what is the exact call to retrieve the current advocate/referral code from core.js? (`getReferralContext()`? A property on `extole.advocate`? Needs confirmation from Extole eng.)
-2. **Fallback behavior** — if core.js hasn't fired yet or the friend has no referral context, the hidden field should submit empty (not block form submission)
-3. **hubspotutk as fallback** — `hubspotutk` (HubSpot's visitor cookie) is available on every page of the visit. If Extole can store the `hubspotutk` → advocate code mapping at landing time, it provides a reliable cross-page fallback for retrieving the advocate code even if core.js isn't active on the form page. Confirm with Extole eng whether this mapping can be stored in Extole's session context.
-4. **Form ID targeting** — does HubSpot's embed API provide a reliable way to identify which form is rendering so we can scope injection to configured forms only?
-4. **Property creation at install** — should the app auto-create the `extole_advocate_code` Contact property on first setup, or require the admin to create it manually?
+1. **Fallback behavior** — if the friend has no referral context (no advocate code in URL, no `hubspotutk`), both hidden fields should submit empty and not block form submission.
+2. **Form ID targeting** — does HubSpot's embed API provide a reliable way to identify which form is rendering so we can scope injection to configured forms only?
+3. **Property creation at install** — should the app auto-create the `extole_advocate_code` Contact property on first setup, or require the admin to create it manually?
+4. **Register call fields** — confirm with Extole eng which fields are required vs optional in the register call, and whether Contact ID is supported as a supplementary identity key.
 
 ---
 

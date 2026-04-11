@@ -13,6 +13,39 @@ const { testConnection, fireEvent } = require('./extole');
 const HS_API_BASE = 'https://api.hubapi.com';
 const BATCH_SIZE = 50;
 
+// Workflows we manage — keyed by a stable name prefix we can match on
+const WORKFLOW_CONFIGS = {
+  contact_created: {
+    name: 'Extole — Contact Created',
+    eventName: 'hubspot_contact_created',
+    // HubSpot workflow token syntax for contact properties
+    bodyTemplate: (eventName) => JSON.stringify({
+      event_name: eventName,
+      data: {
+        email: '{{contact.email}}',
+        contact_id: '{{contact.hs_object_id}}',
+        first_name: '{{contact.firstname}}',
+        last_name: '{{contact.lastname}}',
+        app_type: 'hubspot_crm',
+      },
+    }),
+  },
+  deal_closed_won: {
+    name: 'Extole — Deal Closed Won',
+    eventName: 'hubspot_deal_closed_won',
+    bodyTemplate: (eventName) => JSON.stringify({
+      event_name: eventName,
+      data: {
+        deal_id: '{{deal.hs_object_id}}',
+        deal_name: '{{deal.dealname}}',
+        amount: '{{deal.amount}}',
+        close_date: '{{deal.closedate}}',
+        app_type: 'hubspot_crm',
+      },
+    }),
+  },
+};
+
 exports.main = async (context) => {
   const hsToken = context.secrets.PRIVATE_APP_TOKEN;
   const extoleToken = context.secrets.EXTOLE_API_TOKEN;
@@ -30,6 +63,12 @@ exports.main = async (context) => {
 
     case 'runBackfillBatch':
       return handleRunBackfillBatch(hsToken, extoleToken, params);
+
+    case 'getWorkflows':
+      return handleGetWorkflows(hsToken);
+
+    case 'createWorkflow':
+      return handleCreateWorkflow(hsToken, extoleToken, params);
 
     default:
       return { error: `Unknown action: ${action}` };
@@ -136,6 +175,63 @@ async function handleRunBackfillBatch(hsToken, extoleToken, { cursor, hubspotutk
     cursor: nextCursor,
     done: !nextCursor,
     batchSize: contacts.length,
+  };
+}
+
+async function handleGetWorkflows(hsToken) {
+  const res = await hsGet(hsToken, '/automation/v3/workflows');
+  if (!res.ok) {
+    return { error: `HubSpot API error: ${res.status}`, workflows: [] };
+  }
+  const data = await res.json();
+  const extoleWorkflows = (data.workflows || [])
+    .filter(w => w.name && w.name.startsWith('Extole'))
+    .map(w => ({ id: w.id, name: w.name, enabled: w.enabled }));
+  return { workflows: extoleWorkflows };
+}
+
+async function handleCreateWorkflow(hsToken, extoleToken, { workflowType }) {
+  const config = WORKFLOW_CONFIGS[workflowType];
+  if (!config) return { error: `Unknown workflowType: ${workflowType}` };
+  if (!extoleToken) return { error: 'EXTOLE_API_TOKEN secret not configured' };
+
+  const requestBody = config.bodyTemplate(config.eventName);
+
+  const workflow = {
+    name: config.name,
+    type: 'DRIP_DELAY',
+    enabled: false,
+    onlyEnrollsManually: false,
+    allowContactToTriggerMultipleTimes: false,
+    actions: [
+      {
+        actionId: 1,
+        type: 'WEBHOOK',
+        url: 'https://api.extole.io/v5/events',
+        method: 'POST',
+        body: requestBody,
+        additionalHeaders: [
+          { header: 'Authorization', value: `Bearer ${extoleToken}` },
+          { header: 'Content-Type', value: 'application/json' },
+        ],
+      },
+    ],
+  };
+
+  const res = await hsPost(hsToken, '/automation/v3/workflows', workflow);
+  const responseData = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    return {
+      error: responseData.message || `HTTP ${res.status}`,
+      details: responseData,
+    };
+  }
+
+  return {
+    workflowId: responseData.id,
+    name: responseData.name,
+    portalId: responseData.portalId,
   };
 }
 

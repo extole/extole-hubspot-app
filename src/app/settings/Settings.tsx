@@ -10,7 +10,7 @@ import {
   TextArea,
   hubspot,
 } from '@hubspot/ui-extensions';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 hubspot.extend(() => <ExtoleSettings />);
 
@@ -33,6 +33,13 @@ function ExtoleSettings() {
   const [propertiesCreated, setPropertiesCreated] = useState(false);
   const [propertiesLoading, setPropertiesLoading] = useState(false);
   const [propertiesResult, setPropertiesResult] = useState<string | null>(null);
+
+  // Event Configurator
+  type WorkflowInfo = { id: number; name: string; enabled: boolean };
+  const [workflows, setWorkflows] = useState<WorkflowInfo[]>([]);
+  const [workflowsLoaded, setWorkflowsLoaded] = useState(false);
+  const [creatingWorkflow, setCreatingWorkflow] = useState<string | null>(null);
+  const [workflowResults, setWorkflowResults] = useState<Record<string, string>>({});
 
   // Backfill
   const [contactTotal, setContactTotal] = useState<number | null>(null);
@@ -142,6 +149,51 @@ function ExtoleSettings() {
     setBackfillDone(true);
   }
 
+  function handleLoadWorkflows() {
+    setWorkflowsLoaded(false);
+    hubspot.runServerlessFunction({
+      name: 'extole_settings',
+      parameters: { action: 'getWorkflows' },
+      propertiesToSend: [],
+    }).then((res) => {
+      setWorkflows(res.response?.workflows ?? []);
+      setWorkflowsLoaded(true);
+    }).catch(() => {
+      setWorkflowsLoaded(true);
+    });
+  }
+
+  function handleCreateWorkflow(workflowType: string) {
+    setCreatingWorkflow(workflowType);
+    setWorkflowResults(prev => ({ ...prev, [workflowType]: '' }));
+    hubspot.runServerlessFunction({
+      name: 'extole_settings',
+      parameters: { action: 'createWorkflow', workflowType },
+      propertiesToSend: [],
+    }).then((res) => {
+      if (res.response?.error) {
+        setWorkflowResults(prev => ({ ...prev, [workflowType]: `Error: ${res.response.error}` }));
+      } else {
+        const { workflowId, name } = res.response || {};
+        setWorkflowResults(prev => ({
+          ...prev,
+          [workflowType]: `Created: "${name}" (ID ${workflowId}) — open it in HubSpot Workflows to set the enrollment trigger, then enable it.`,
+        }));
+        // Refresh workflow list
+        handleLoadWorkflows();
+      }
+    }).catch((err) => {
+      setWorkflowResults(prev => ({ ...prev, [workflowType]: `Error: ${err.message}` }));
+    }).finally(() => {
+      setCreatingWorkflow(null);
+    });
+  }
+
+  // Load workflows on first render
+  useEffect(() => {
+    handleLoadWorkflows();
+  }, []);
+
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
@@ -246,20 +298,36 @@ function ExtoleSettings() {
       {/* ── Event Configuration ── */}
       <Text format={{ fontWeight: 'bold' }}>Event Configuration</Text>
       <Text>
-        To send HubSpot CRM events to Extole, create HubSpot Workflows with the built-in
-        "Send a webhook" action (requires Data Hub Professional or higher).
+        Create HubSpot Workflows that fire CRM events to Extole. Each workflow is pre-configured
+        with the correct endpoint, authorization header, and payload — you just need to set the
+        enrollment trigger and enable it.
       </Text>
-      <Text format={{ fontWeight: 'bold' }}>Minimum required workflows:</Text>
-      <Text>1. Contact Created → POST to Extole with email, contact ID, and hubspotutk property</Text>
-      <Text>2. Deal Closed Won → POST to Extole with deal ID and associated contact email</Text>
-      <Text>
-        Extole event endpoint: https://api.extole.io/v5/events{'\n'}
-        Authorization header: Bearer {'<'}EXTOLE_API_TOKEN{'>'}
-      </Text>
-      <Text>
-        Contact your Extole implementation team for the exact payload format and event names
-        to use for your program configuration.
-      </Text>
+
+      {!workflowsLoaded && <LoadingSpinner label="Loading workflows..." showLabel />}
+
+      {workflowsLoaded && (
+        <>
+          <WorkflowRow
+            label="Contact Created"
+            description="Fires hubspot_contact_created when a new contact is added. Set enrollment trigger to: Contact is created."
+            workflowName="Extole — Contact Created"
+            existingWorkflows={workflows}
+            creating={creatingWorkflow === 'contact_created'}
+            result={workflowResults['contact_created'] ?? ''}
+            onCreate={() => handleCreateWorkflow('contact_created')}
+          />
+
+          <WorkflowRow
+            label="Deal Closed Won"
+            description="Fires hubspot_deal_closed_won when a deal reaches Closed Won. Set enrollment trigger to: Deal stage is Closed Won."
+            workflowName="Extole — Deal Closed Won"
+            existingWorkflows={workflows}
+            creating={creatingWorkflow === 'deal_closed_won'}
+            result={workflowResults['deal_closed_won'] ?? ''}
+            onCreate={() => handleCreateWorkflow('deal_closed_won')}
+          />
+        </>
+      )}
 
       <Divider />
 
@@ -297,6 +365,52 @@ function ExtoleSettings() {
 
       {backfillDone && <Text>Backfill complete.</Text>}
     </Form>
+  );
+}
+
+// ─── WorkflowRow ─────────────────────────────────────────────────────────────
+
+function WorkflowRow({
+  label,
+  description,
+  workflowName,
+  existingWorkflows,
+  creating,
+  result,
+  onCreate,
+}: {
+  label: string;
+  description: string;
+  workflowName: string;
+  existingWorkflows: { id: number; name: string; enabled: boolean }[];
+  creating: boolean;
+  result: string;
+  onCreate: () => void;
+}) {
+  const existing = existingWorkflows.find(w => w.name === workflowName);
+
+  return (
+    <Flex direction="column" gap="extra-small">
+      <Flex direction="row" gap="small" alignItems="center" justifyContent="space-between">
+        <Flex direction="column" gap="extra-small">
+          <Text format={{ fontWeight: 'bold' }}>{label}</Text>
+          <Text>{description}</Text>
+          {existing && (
+            <Text>
+              {existing.enabled ? 'Active' : 'Created — not yet enabled'} (Workflow ID: {existing.id})
+            </Text>
+          )}
+        </Flex>
+        <Button
+          onClick={onCreate}
+          disabled={creating || !!existing}
+          size="small"
+        >
+          {creating ? 'Creating...' : existing ? 'Created' : 'Create Workflow'}
+        </Button>
+      </Flex>
+      {result && <Text>{result}</Text>}
+    </Flex>
   );
 }
 

@@ -91,7 +91,12 @@ async function handleCreateProperties(hsToken, { hubspotutkProperty, advocateCod
 }
 
 async function handleGetContactCount(hsToken) {
-  const response = await hsGet(hsToken, '/crm/v3/objects/contacts?limit=1&properties=email');
+  // List endpoint doesn't return total — use search which does
+  const response = await hsPost(hsToken, '/crm/v3/objects/contacts/search', {
+    filterGroups: [],
+    properties: ['email'],
+    limit: 1,
+  });
   if (!response.ok) {
     return { error: `HubSpot API error: ${response.status}` };
   }

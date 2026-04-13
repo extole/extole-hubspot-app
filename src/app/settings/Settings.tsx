@@ -4,6 +4,7 @@ import {
   Flex,
   Form,
   Input,
+  Link,
   LoadingSpinner,
   Select,
   Text,
@@ -12,7 +13,9 @@ import {
 } from '@hubspot/ui-extensions';
 import { useState, useEffect } from 'react';
 
-hubspot.extend(() => <ExtoleSettings />);
+hubspot.extend(({ runServerlessFunction, context }) => (
+  <ExtoleSettings runServerlessFunction={runServerlessFunction} portalId={context.portal.id} />
+));
 
 const DEFAULT_HUBSPOTUTK_PROPERTY = 'extole_hubspotutk';
 const DEFAULT_ADVOCATE_CODE_PROPERTY = 'extole_advocate_code';
@@ -28,7 +31,7 @@ type EventFormState = {
   fieldMappings: FieldMapping[];
 };
 
-type WorkflowInfo = { id: number; name: string; enabled: boolean };
+type WorkflowInfo = { id: string; name: string; enabled: boolean };
 
 // ─── Default field mappings ───────────────────────────────────────────────────
 
@@ -37,6 +40,7 @@ const CONTACT_DEFAULTS: FieldMapping[] = [
   { extoleKey: 'contact_id', source: 'property', value: 'hs_object_id' },
   { extoleKey: 'first_name', source: 'property', value: 'firstname' },
   { extoleKey: 'last_name', source: 'property', value: 'lastname' },
+  { extoleKey: 'hubspotutk', source: 'property', value: 'extole_hubspotutk' },
 ];
 
 const DEAL_DEFAULTS: FieldMapping[] = [
@@ -54,9 +58,10 @@ const BLANK_EVENT_FORM: EventFormState = {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-function ExtoleSettings() {
+function ExtoleSettings({ runServerlessFunction, portalId }: { runServerlessFunction: (opts: any) => Promise<any>; portalId: number }) {
   // Connection
   const [connectionStatus, setConnectionStatus] = useState<'unknown' | 'ok' | 'error'>('unknown');
+  const [connectionDetail, setConnectionDetail] = useState<string>('');
   const [connectionTesting, setConnectionTesting] = useState(false);
 
   // Form Configurator settings
@@ -73,9 +78,11 @@ function ExtoleSettings() {
   const [workflows, setWorkflows] = useState<WorkflowInfo[]>([]);
   const [workflowsLoaded, setWorkflowsLoaded] = useState(false);
   const [showEventForm, setShowEventForm] = useState(false);
+  const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null);
   const [eventForm, setEventForm] = useState<EventFormState>(BLANK_EVENT_FORM);
   const [creatingWorkflow, setCreatingWorkflow] = useState(false);
   const [createResult, setCreateResult] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // Backfill
   const [contactTotal, setContactTotal] = useState<number | null>(null);
@@ -100,14 +107,17 @@ function ExtoleSettings() {
 
   function handleTestConnection() {
     setConnectionTesting(true);
-    hubspot.runServerlessFunction({
+    runServerlessFunction({
       name: 'extole_settings',
       parameters: { action: 'testConnection' },
       propertiesToSend: [],
     }).then((res) => {
-      setConnectionStatus(res.response?.connected ? 'ok' : 'error');
-    }).catch(() => {
+      const r = res.response;
+      setConnectionStatus(r?.connected ? 'ok' : 'error');
+      setConnectionDetail(r?.connected ? '' : `status=${r?.status ?? 'unknown'} error=${r?.error ?? 'none'} prefix=${r?.tokenPrefix ?? 'n/a'}`);
+    }).catch((err: any) => {
       setConnectionStatus('error');
+      setConnectionDetail(err?.message ?? 'function call failed');
     }).finally(() => {
       setConnectionTesting(false);
     });
@@ -116,7 +126,7 @@ function ExtoleSettings() {
   function handleCreateProperties() {
     setPropertiesLoading(true);
     setPropertiesResult(null);
-    hubspot.runServerlessFunction({
+    runServerlessFunction({
       name: 'extole_settings',
       parameters: {
         action: 'createProperties',
@@ -139,7 +149,7 @@ function ExtoleSettings() {
   }
 
   function handleLoadContactCount() {
-    hubspot.runServerlessFunction({
+    runServerlessFunction({
       name: 'extole_settings',
       parameters: { action: 'getContactCount' },
       propertiesToSend: [],
@@ -159,7 +169,7 @@ function ExtoleSettings() {
     let totalErrors = 0;
 
     while (true) {
-      const res = await hubspot.runServerlessFunction({
+      const res = await runServerlessFunction({
         name: 'extole_settings',
         parameters: {
           action: 'runBackfillBatch',
@@ -186,7 +196,7 @@ function ExtoleSettings() {
 
   function handleLoadWorkflows() {
     setWorkflowsLoaded(false);
-    hubspot.runServerlessFunction({
+    runServerlessFunction({
       name: 'extole_settings',
       parameters: { action: 'getWorkflows' },
       propertiesToSend: [],
@@ -198,10 +208,54 @@ function ExtoleSettings() {
     });
   }
 
+  function handleDeleteWorkflow(flowId: string) {
+    runServerlessFunction({
+      name: 'extole_settings',
+      parameters: { action: 'deleteWorkflow', flowId },
+      propertiesToSend: [],
+    }).then(() => {
+      setConfirmDeleteId(null);
+      handleLoadWorkflows();
+    });
+  }
+
+  function handleEditWorkflow(w: WorkflowInfo) {
+    setEditingWorkflowId(w.id);
+    setShowEventForm(true);
+    setCreateResult('Loading...');
+    runServerlessFunction({
+      name: 'extole_settings',
+      parameters: { action: 'getWorkflowConfig', flowId: w.id },
+      propertiesToSend: [],
+    }).then((res) => {
+      const config = res.response?.config;
+      setEventForm(config ?? {
+        eventName: w.name.replace(/^Extole\s*[—-]\s*/, ''),
+        triggerObject: 'contact',
+        fieldMappings: [...CONTACT_DEFAULTS],
+      });
+      setCreateResult('');
+    }).catch(() => {
+      setEventForm({
+        eventName: w.name.replace(/^Extole\s*[—-]\s*/, ''),
+        triggerObject: 'contact',
+        fieldMappings: [...CONTACT_DEFAULTS],
+      });
+      setCreateResult('');
+    });
+  }
+
+  function closeEventForm() {
+    setShowEventForm(false);
+    setEditingWorkflowId(null);
+    setEventForm(BLANK_EVENT_FORM);
+    setCreateResult('');
+  }
+
   function handleCreateEventWorkflow() {
     setCreatingWorkflow(true);
     setCreateResult('');
-    hubspot.runServerlessFunction({
+    runServerlessFunction({
       name: 'extole_settings',
       parameters: {
         action: 'createWorkflow',
@@ -215,9 +269,38 @@ function ExtoleSettings() {
         setCreateResult(`Error: ${res.response.error}`);
       } else {
         const { workflowId, name } = res.response || {};
-        setCreateResult(`Created "${name}" (ID ${workflowId}) — open in HubSpot Workflows, set the enrollment trigger, then enable it.`);
-        setShowEventForm(false);
-        setEventForm(BLANK_EVENT_FORM);
+        setCreateResult(`Created and enabled "${name}" (ID ${workflowId}).`);
+        closeEventForm();
+        handleLoadWorkflows();
+      }
+    }).catch((err) => {
+      setCreateResult(`Error: ${err.message}`);
+    }).finally(() => {
+      setCreatingWorkflow(false);
+    });
+  }
+
+  function handleUpdateEventWorkflow() {
+    if (!editingWorkflowId) return;
+    setCreatingWorkflow(true);
+    setCreateResult('');
+    runServerlessFunction({
+      name: 'extole_settings',
+      parameters: {
+        action: 'updateWorkflow',
+        flowId: editingWorkflowId,
+        eventName: eventForm.eventName,
+        triggerObject: eventForm.triggerObject,
+        fieldMappings: eventForm.fieldMappings,
+      },
+      propertiesToSend: [],
+    }).then((res) => {
+      if (res.response?.error) {
+        setCreateResult(`Error: ${res.response.error}`);
+      } else {
+        const { name } = res.response || {};
+        setCreateResult(`Saved "${name}".`);
+        closeEventForm();
         handleLoadWorkflows();
       }
     }).catch((err) => {
@@ -242,7 +325,7 @@ function ExtoleSettings() {
           {connectionTesting ? 'Testing...' : 'Test Connection'}
         </Button>
         {connectionStatus === 'ok' && <Text>Connected</Text>}
-        {connectionStatus === 'error' && <Text>Connection failed — check EXTOLE_API_TOKEN secret</Text>}
+        {connectionStatus === 'error' && <Text>Connection failed — {connectionDetail || 'check EXTOLE_API_TOKEN secret'}</Text>}
       </Flex>
 
       <Divider />
@@ -348,7 +431,29 @@ function ExtoleSettings() {
             <Flex direction="row" gap="small" alignItems="center" justifyContent="space-between">
               <Flex direction="column" gap="extra-small">
                 <Text format={{ fontWeight: 'bold' }}>{w.name}</Text>
-                <Text>{w.enabled ? 'Active' : 'Not enabled'} · Workflow ID {w.id}</Text>
+                <Text>{w.enabled ? 'Active' : 'Not enabled'} · ID {w.id}</Text>
+              </Flex>
+              <Flex direction="row" gap="extra-small" alignItems="center" alignSelf="center">
+                <Button onClick={() => handleEditWorkflow(w)} disabled={showEventForm}>
+                  Edit
+                </Button>
+                {confirmDeleteId === w.id ? (
+                  <>
+                    <Button onClick={() => handleDeleteWorkflow(w.id)} variant="destructive">
+                      Confirm delete
+                    </Button>
+                    <Button onClick={() => setConfirmDeleteId(null)}>
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
+                  <Button onClick={() => setConfirmDeleteId(w.id)} disabled={showEventForm}>
+                    Delete
+                  </Button>
+                )}
+                <Link href={`https://app.hubspot.com/workflows/${portalId}/flow/${w.id}/edit`}>
+                  Open in HubSpot
+                </Link>
               </Flex>
             </Flex>
           ))}
@@ -366,10 +471,18 @@ function ExtoleSettings() {
             <EventForm
               form={eventForm}
               onChange={setEventForm}
-              onSubmit={handleCreateEventWorkflow}
-              onCancel={() => { setShowEventForm(false); setCreateResult(''); }}
+              onSubmit={editingWorkflowId ? handleUpdateEventWorkflow : handleCreateEventWorkflow}
+              onCancel={closeEventForm}
               creating={creatingWorkflow}
               createResult={createResult}
+              isEditing={!!editingWorkflowId}
+              onValidateProperty={(objectType, propertyName) =>
+                runServerlessFunction({
+                  name: 'extole_settings',
+                  parameters: { action: 'validateProperty', objectType, propertyName },
+                  propertiesToSend: [],
+                }).then((res) => res.response?.valid ?? false).catch(() => false)
+              }
             />
           )}
         </>
@@ -388,18 +501,13 @@ function ExtoleSettings() {
         <Button onClick={handleLoadContactCount} disabled={backfillRunning}>
           Count Contacts
         </Button>
+        <Button onClick={handleRunBackfill} disabled={backfillRunning} variant="primary">
+          {backfillRunning ? 'Running...' : 'Start Backfill'}
+        </Button>
         {contactTotal !== null && (
           <Text>{contactTotal.toLocaleString()} contacts to enroll</Text>
         )}
       </Flex>
-
-      <Button
-        onClick={handleRunBackfill}
-        disabled={backfillRunning}
-        variant="primary"
-      >
-        {backfillRunning ? 'Running...' : 'Start Backfill'}
-      </Button>
 
       {backfillRunning && <LoadingSpinner label="Enrolling contacts..." showLabel />}
 
@@ -423,6 +531,8 @@ function EventForm({
   onCancel,
   creating,
   createResult,
+  isEditing,
+  onValidateProperty,
 }: {
   form: EventFormState;
   onChange: (f: EventFormState) => void;
@@ -430,7 +540,11 @@ function EventForm({
   onCancel: () => void;
   creating: boolean;
   createResult: string;
+  isEditing?: boolean;
+  onValidateProperty?: (objectType: string, propertyName: string) => Promise<boolean>;
 }) {
+  const [propErrors, setPropErrors] = useState<Record<number, boolean>>({});
+
   function setEventName(v: string) {
     onChange({ ...form, eventName: v });
   }
@@ -442,6 +556,7 @@ function EventForm({
       triggerObject: obj,
       fieldMappings: obj === 'deal' ? [...DEAL_DEFAULTS] : [...CONTACT_DEFAULTS],
     });
+    setPropErrors({});
   }
 
   function updateMapping(index: number, field: keyof FieldMapping, value: string) {
@@ -449,6 +564,10 @@ function EventForm({
       i === index ? { ...m, [field]: value } : m
     );
     onChange({ ...form, fieldMappings: updated });
+    // Clear error when source changes to static or value is cleared
+    if (field === 'source' || (field === 'value' && !value)) {
+      setPropErrors(prev => { const n = { ...prev }; delete n[index]; return n; });
+    }
   }
 
   function addMapping() {
@@ -463,6 +582,21 @@ function EventForm({
       ...form,
       fieldMappings: form.fieldMappings.filter((_, i) => i !== index),
     });
+    setPropErrors(prev => {
+      const n: Record<number, boolean> = {};
+      Object.entries(prev).forEach(([k, v]) => {
+        const ki = Number(k);
+        if (ki < index) n[ki] = v;
+        else if (ki > index) n[ki - 1] = v;
+      });
+      return n;
+    });
+  }
+
+  async function validatePropertyAt(index: number, propertyName: string) {
+    if (!onValidateProperty || !propertyName.trim()) return;
+    const valid = await onValidateProperty(form.triggerObject, propertyName.trim());
+    setPropErrors(prev => ({ ...prev, [index]: !valid }));
   }
 
   const canSubmit = !!form.eventName.trim() && !creating;
@@ -499,41 +633,49 @@ function EventForm({
 
       {form.fieldMappings.map((mapping, i) => (
         <Flex direction="row" gap="small" alignItems="flex-end">
-          <Input
-            label="Extole key"
-            name={`ek_${i}`}
-            value={mapping.extoleKey}
-            onChange={(v) => updateMapping(i, 'extoleKey', v)}
-            placeholder="e.g. email"
-          />
-          <Select
-            label="Source"
-            name={`src_${i}`}
-            value={mapping.source}
-            onChange={(v) => updateMapping(i, 'source', v as 'property' | 'static')}
-            options={[
-              { label: 'Property', value: 'property' },
-              { label: 'Static', value: 'static' },
-            ]}
-          />
-          <Input
-            label={mapping.source === 'property' ? 'HubSpot property' : 'Static value'}
-            name={`val_${i}`}
-            value={mapping.value}
-            onChange={(v) => updateMapping(i, 'value', v)}
-            placeholder={mapping.source === 'property' ? 'e.g. email' : 'e.g. hubspot_crm'}
-          />
+          <Flex flex={2} direction="column">
+            <Input
+              label="Extole parameter"
+              name={`ek_${i}`}
+              value={mapping.extoleKey}
+              onChange={(v) => updateMapping(i, 'extoleKey', v)}
+              placeholder="e.g. email"
+            />
+          </Flex>
+          <Flex flex={1} direction="column">
+            <Select
+              label="Source"
+              name={`src_${i}`}
+              value={mapping.source}
+              onChange={(v) => updateMapping(i, 'source', v as 'property' | 'static')}
+              options={[
+                { label: 'Property', value: 'property' },
+                { label: 'Static', value: 'static' },
+              ]}
+            />
+          </Flex>
+          <Flex flex={2} direction="column">
+            <Input
+              label={mapping.source === 'property' ? 'HubSpot property' : 'Static value'}
+              name={`val_${i}`}
+              value={mapping.value}
+              onChange={(v) => updateMapping(i, 'value', v)}
+              onBlur={(v) => { if (mapping.source === 'property') validatePropertyAt(i, v); }}
+              placeholder={mapping.source === 'property' ? 'e.g. email' : 'e.g. hubspot_crm'}
+              error={mapping.source === 'property' && !!propErrors[i]}
+              validationMessage={mapping.source === 'property' && propErrors[i] ? 'Property not found in HubSpot' : undefined}
+            />
+          </Flex>
           <Button onClick={() => removeMapping(i)}>−</Button>
         </Flex>
       ))}
 
-      <Button onClick={addMapping}>+ Add field</Button>
-
       {createResult && <Text>{createResult}</Text>}
 
-      <Flex direction="row" gap="small">
+      <Flex direction="row" gap="small" alignItems="center">
+        <Button onClick={addMapping}>+ Add field</Button>
         <Button onClick={onSubmit} disabled={!canSubmit} variant="primary">
-          {creating ? 'Creating...' : 'Create Workflow'}
+          {creating ? (isEditing ? 'Saving...' : 'Creating...') : (isEditing ? 'Save Changes' : 'Create Workflow')}
         </Button>
         <Button onClick={onCancel} disabled={creating}>
           Cancel

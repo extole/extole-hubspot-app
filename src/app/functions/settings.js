@@ -15,8 +15,8 @@ const BATCH_SIZE = 50;
 
 
 exports.main = async (context) => {
-  const hsToken = context.secrets.PRIVATE_APP_TOKEN;
-  const extoleToken = context.secrets.EXTOLE_API_TOKEN;
+  const hsToken = context.secrets.PRIVATE_APP_TOKEN || process.env.PRIVATE_APP_TOKEN;
+  const extoleToken = context.secrets.EXTOLE_API_TOKEN || process.env.EXTOLE_API_TOKEN;
   const { action, ...params } = context.parameters || {};
 
   switch (action) {
@@ -25,6 +25,9 @@ exports.main = async (context) => {
 
     case 'createProperties':
       return handleCreateProperties(hsToken, params);
+
+    case 'validateProperty':
+      return handleValidateProperty(hsToken, params);
 
     case 'getContactCount':
       return handleGetContactCount(hsToken);
@@ -35,8 +38,17 @@ exports.main = async (context) => {
     case 'getWorkflows':
       return handleGetWorkflows(hsToken);
 
+    case 'getWorkflowConfig':
+      return handleGetWorkflowConfig(hsToken, params);
+
+    case 'deleteWorkflow':
+      return handleDeleteWorkflow(hsToken, params);
+
     case 'createWorkflow':
       return handleCreateWorkflow(hsToken, extoleToken, params);
+
+    case 'updateWorkflow':
+      return handleUpdateWorkflow(hsToken, extoleToken, params);
 
     default:
       return { error: `Unknown action: ${action}` };
@@ -53,6 +65,7 @@ async function handleTestConnection(extoleToken) {
   return {
     connected: result.ok || result.status === 401, // 401 means reachable but token may need scope
     status: result.status,
+    tokenPrefix: extoleToken.slice(0, 4),
   };
 }
 
@@ -88,6 +101,13 @@ async function handleCreateProperties(hsToken, { hubspotutkProperty, advocateCod
   }
 
   return { created, errors };
+}
+
+async function handleValidateProperty(hsToken, { objectType, propertyName }) {
+  if (!propertyName) return { valid: false };
+  const crmType = objectType === 'deal' ? 'deals' : 'contacts';
+  const res = await hsGet(hsToken, `/crm/v3/properties/${crmType}/${propertyName}`);
+  return { valid: res.ok };
 }
 
 async function handleGetContactCount(hsToken) {
@@ -152,58 +172,84 @@ async function handleRunBackfillBatch(hsToken, extoleToken, { cursor, hubspotutk
 }
 
 async function handleGetWorkflows(hsToken) {
-  const res = await hsGet(hsToken, '/automation/v3/workflows');
+  // Use v4 flows API — covers both v3-migrated and natively v4-created workflows.
+  const res = await fetch('https://api.hubapi.com/automation/v4/flows?objectTypeId=0-1&limit=100', {
+    headers: { Authorization: `Bearer ${hsToken}` },
+  });
   if (!res.ok) {
     return { error: `HubSpot API error: ${res.status}`, workflows: [] };
   }
   const data = await res.json();
-  const extoleWorkflows = (data.workflows || [])
+  const extoleWorkflows = (data.results || [])
     .filter(w => w.name && w.name.startsWith('Extole'))
-    .map(w => ({ id: w.id, name: w.name, enabled: w.enabled }));
+    .map(w => ({ id: w.id, name: w.name, enabled: w.isEnabled }));
   return { workflows: extoleWorkflows };
 }
+
+// HubSpot v4 Flows event type IDs for "record created" per object type.
+// Verified as consistent across portals in testing (2026-04).
+const RECORD_CREATED_EVENT_TYPE_IDS = {
+  contact: '4-1463224',
+};
+
+// Object type → CRM API path and flow type
+const OBJECT_CONFIG = {
+  contact: { crmPath: 'contacts', objectTypeId: '0-1', flowType: 'CONTACT_FLOW' },
+  deal:    { crmPath: 'deals',    objectTypeId: '0-3', flowType: 'DEAL_FLOW' },
+};
 
 async function handleCreateWorkflow(hsToken, extoleToken, { eventName, triggerObject, fieldMappings }) {
   if (!extoleToken) return { error: 'EXTOLE_API_TOKEN secret not configured' };
   if (!eventName) return { error: 'eventName is required' };
 
   const obj = triggerObject || 'contact';
+  const objConfig = OBJECT_CONFIG[obj] || OBJECT_CONFIG.contact;
+  const sourceCode = buildWorkflowSourceCode(hsToken, extoleToken, eventName, objConfig.crmPath, fieldMappings);
 
-  // Build the Extole event payload from user-defined field mappings.
-  // Property mappings become HubSpot token syntax: {{contact.email}}
-  // Static mappings are passed through as literal strings.
-  const data = { app_type: 'hubspot_crm' };
-  for (const mapping of (fieldMappings || [])) {
-    if (!mapping.extoleKey) continue;
-    data[mapping.extoleKey] = mapping.source === 'static'
-      ? mapping.value
-      : `{{${obj}.${mapping.value}}}`;
-  }
-
-  const requestBody = JSON.stringify({ event_name: eventName, data });
-
-  const workflow = {
+  const flow = {
     name: `Extole — ${eventName}`,
-    type: 'DRIP_DELAY',
-    enabled: false,
-    onlyEnrollsManually: false,
-    allowContactToTriggerMultipleTimes: false,
+    flowType: 'WORKFLOW',
+    isEnabled: true,
+    objectTypeId: objConfig.objectTypeId,
+    type: objConfig.flowType,
+    startActionId: '1',
     actions: [
       {
-        actionId: 1,
-        type: 'WEBHOOK',
-        url: 'https://api.extole.io/v5/events',
-        method: 'POST',
-        body: requestBody,
-        additionalHeaders: [
-          { header: 'Authorization', value: `Bearer ${extoleToken}` },
-          { header: 'Content-Type', value: 'application/json' },
-        ],
+        actionId: '1',
+        type: 'CUSTOM_CODE',
+        runtime: 'NODE20X',
+        inputFields: [],
+        sourceCode,
       },
     ],
   };
 
-  const res = await hsPost(hsToken, '/automation/v3/workflows', workflow);
+  // Set auto-enrollment trigger if we have a known "record created" event type ID.
+  const eventTypeId = RECORD_CREATED_EVENT_TYPE_IDS[obj];
+  if (eventTypeId) {
+    flow.enrollmentCriteria = {
+      shouldReEnroll: false,
+      type: 'EVENT_BASED',
+      eventFilterBranches: [{
+        filterBranches: [],
+        filters: [],
+        eventTypeId,
+        operator: 'HAS_COMPLETED',
+        filterBranchType: 'UNIFIED_EVENTS',
+        filterBranchOperator: 'AND',
+      }],
+      listMembershipFilterBranches: [],
+    };
+  }
+
+  const res = await fetch('https://api.hubapi.com/automation/v4/flows', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${hsToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(flow),
+  });
   const responseData = await res.json().catch(() => ({}));
 
   if (!res.ok) {
@@ -211,6 +257,157 @@ async function handleCreateWorkflow(hsToken, extoleToken, { eventName, triggerOb
   }
 
   return { workflowId: responseData.id, name: responseData.name };
+}
+
+async function handleDeleteWorkflow(hsToken, { flowId }) {
+  if (!flowId) return { error: 'flowId is required' };
+  const res = await fetch(`https://api.hubapi.com/automation/v4/flows/${flowId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${hsToken}` },
+  });
+  return { deleted: res.ok, status: res.status };
+}
+
+async function handleGetWorkflowConfig(hsToken, { flowId }) {
+  if (!flowId) return { error: 'flowId is required' };
+  const res = await fetch(`https://api.hubapi.com/automation/v4/flows/${flowId}`, {
+    headers: { Authorization: `Bearer ${hsToken}` },
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  const data = await res.json();
+  const config = parseWorkflowConfig(data.actions?.[0]?.sourceCode || '');
+  return { config };
+}
+
+async function handleUpdateWorkflow(hsToken, extoleToken, { flowId, eventName, triggerObject, fieldMappings }) {
+  if (!extoleToken) return { error: 'EXTOLE_API_TOKEN secret not configured' };
+  if (!flowId) return { error: 'flowId is required' };
+  if (!eventName) return { error: 'eventName is required' };
+
+  const obj = triggerObject || 'contact';
+  const objConfig = OBJECT_CONFIG[obj] || OBJECT_CONFIG.contact;
+  const sourceCode = buildWorkflowSourceCode(hsToken, extoleToken, eventName, objConfig.crmPath, fieldMappings);
+
+  // GET current flow to preserve enrollment criteria and enabled state
+  const getRes = await fetch(`https://api.hubapi.com/automation/v4/flows/${flowId}`, {
+    headers: { Authorization: `Bearer ${hsToken}` },
+  });
+  if (!getRes.ok) {
+    return { error: `Failed to fetch workflow: HTTP ${getRes.status}` };
+  }
+  const existing = await getRes.json();
+
+  // Build a clean PUT body — only include mutable fields.
+  // The v4 API rejects read-only fields (revisionId, uuid, createdAt, etc.) if sent back.
+  const updatedActions = (existing.actions || []).map((a, i) =>
+    i === 0 ? { ...a, sourceCode } : a
+  );
+
+  const putBody = {
+    name: `Extole — ${eventName}`,
+    revisionId: existing.revisionId,
+    flowType: existing.flowType,
+    isEnabled: existing.isEnabled,
+    objectTypeId: existing.objectTypeId,
+    type: existing.type,
+    startActionId: existing.startActionId,
+    actions: updatedActions,
+    enrollmentCriteria: existing.enrollmentCriteria,
+    timeWindows: existing.timeWindows || [],
+    blockedDates: existing.blockedDates || [],
+    suppressionListIds: existing.suppressionListIds || [],
+    canEnrollFromSalesforce: existing.canEnrollFromSalesforce || false,
+  };
+
+  const putRes = await fetch(`https://api.hubapi.com/automation/v4/flows/${flowId}`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${hsToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(putBody),
+  });
+  const responseData = await putRes.json().catch(() => ({}));
+
+  if (!putRes.ok) {
+    return { error: responseData.message || `HTTP ${putRes.status}`, details: responseData };
+  }
+
+  return { workflowId: responseData.id, name: responseData.name };
+}
+
+function parseWorkflowConfig(sourceCode) {
+  if (!sourceCode) return null;
+  try {
+    const eventName = sourceCode.match(/const EVENT_NAME = '([^']+)'/)?.[1];
+    const crmType = sourceCode.match(/const CRM_TYPE = '([^']+)'/)?.[1];
+    const mappingsMatch = sourceCode.match(/const FIELD_MAPPINGS = (\[[\s\S]*?\]);/);
+    const fieldMappings = mappingsMatch ? JSON.parse(mappingsMatch[1]) : [];
+    if (!eventName) return null;
+    return {
+      eventName,
+      triggerObject: crmType === 'deals' ? 'deal' : 'contact',
+      fieldMappings,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildWorkflowSourceCode(hsToken, extoleToken, eventName, crmObjectType, fieldMappings) {
+  // Escape tokens for safe embedding in JS string literals
+  const escape = (s) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+  return `
+const HS_TOKEN = '${escape(hsToken)}';
+const EXTOLE_TOKEN = '${escape(extoleToken)}';
+const EVENT_NAME = '${escape(eventName)}';
+const CRM_TYPE = '${crmObjectType}';
+const FIELD_MAPPINGS = ${JSON.stringify(fieldMappings || [])};
+
+exports.main = async (event) => {
+  const objectId = event.object.objectId;
+
+  // Fetch object properties from HubSpot CRM
+  const propNames = [...new Set(
+    FIELD_MAPPINGS.filter(m => m.source === 'property' && m.value).map(m => m.value)
+  )];
+  const propsQuery = propNames.map(p => 'properties=' + encodeURIComponent(p)).join('&');
+
+  const hsRes = await fetch(
+    'https://api.hubapi.com/crm/v3/objects/' + CRM_TYPE + '/' + objectId + (propsQuery ? '?' + propsQuery : ''),
+    { headers: { Authorization: 'Bearer ' + HS_TOKEN } }
+  );
+  const hsBody = await hsRes.json().catch(() => ({}));
+  const props = hsBody.properties || {};
+
+  // Build Extole event data from field mappings
+  const data = { app_type: 'hubspot_crm' };
+  for (const m of FIELD_MAPPINGS) {
+    if (!m.extoleKey) continue;
+    const value = m.source === 'static' ? m.value : props[m.value];
+    if (value != null && value !== '') data[m.extoleKey] = value;
+  }
+
+  // Fire event to Extole
+  const extoleRes = await fetch('https://api.extole.io/v5/events', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + EXTOLE_TOKEN, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event_name: EVENT_NAME, data })
+  });
+
+  let extoleBody;
+  try { extoleBody = await extoleRes.json(); } catch { extoleBody = null; }
+
+  return {
+    outputFields: {
+      status: extoleRes.ok ? 'SUCCESS' : 'ERROR',
+      extoleId: (extoleBody && extoleBody.id) || null,
+      httpStatus: String(extoleRes.status)
+    }
+  };
+};
+`.trim();
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

@@ -1,9 +1,9 @@
 {
-  "entry": "NewCard.tsx",
+  "entry": "Settings.tsx",
   "modules": {
     "internal": [
       {
-        "module": "NewCard.tsx",
+        "module": "Settings.tsx",
         "renderedExports": []
       }
     ],
@@ -66,9 +66,28 @@
         "module": "node_modules/@hubspot/ui-extensions/dist/shared/remoteComponents.js",
         "renderedExports": [
           "__hubSpotComponentRegistry",
+          "Button",
           "Divider",
+          "Spacer",
+          "Form",
+          "Heading",
+          "Input",
+          "Link",
+          "TextArea",
+          "LoadingSpinner",
+          "Select",
           "Text",
-          "Flex"
+          "Table",
+          "TableCell",
+          "TableRow",
+          "TableBody",
+          "TableHeader",
+          "TableHead",
+          "Box",
+          "Flex",
+          "Toggle",
+          "Dropdown",
+          "StatusTag"
         ]
       },
       {
@@ -79,13 +98,13 @@
   },
   "dataDeps": [],
   "package": {
-    "name": "hubspot-example-extension",
+    "name": "extole-hs-settings",
     "version": "0.1.0",
     "lockfileVersion": 3,
     "requires": true,
     "packages": {
       "": {
-        "name": "hubspot-example-extension",
+        "name": "extole-hs-settings",
         "version": "0.1.0",
         "license": "MIT",
         "dependencies": {

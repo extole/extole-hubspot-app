@@ -3,3 +3,4 @@ node_modules/
 *.log
 hsprofile.*.json
 hubspot.config.yml
+.env

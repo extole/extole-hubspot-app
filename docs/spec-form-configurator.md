@@ -13,14 +13,19 @@ Without instrumentation, the advocate code is invisible to HubSpot and the refer
 
 ## Approach
 
-Extole's `core.js` is already deployed first-party on the client's site. When a friend arrives via a share link, core.js captures the referral context and maintains it in a first-party session (via access token / cookie scoped to the client's base domain).
-
 The Form Configurator adds a thin JS snippet to the client's site that:
-1. Reads `hubspotutk` from the browser cookie (set by HubSpot's tracking script) and injects it into a hidden field on configured HubSpot forms
-2. Optionally reads the Extole advocate code from the landing page URL parameter and injects it into a separate hidden field
-3. The form submits with both values → Contact is created in HubSpot with hubspotutk stored for Extole lookup, and optionally with the advocate code for direct HubSpot reporting
 
-**Cross-page persistence is handled by Extole core.js** — since it's first-party and session-scoped to the client's base domain, the referral context survives navigation. The friend does not need to convert on the landing page.
+1. Reads the Extole advocate code from the landing page URL parameter (`extole_shareable_code` by default) and persists it in `sessionStorage` — so it survives navigation to other pages.
+2. On form ready, sets the value of an existing `extole_advocate_code` hidden field on the form.
+3. The form submits with the advocate code → Contact is created in HubSpot with the code for Extole attribution and HubSpot reporting.
+
+**Prerequisites:** Each HubSpot form must have `extole_advocate_code` added as a hidden field in HubSpot's form builder. This is a one-time setup per form. HubSpot's server enforces that only fields explicitly defined on the form (`renderedFieldsIds`) are saved — client-side injection of fields not on the form is silently dropped.
+
+**Supported form types:**
+- **v2 classic forms** (`hbspt.forms.create`) — snippet wraps `forms.create` with a deferred `Object.defineProperty` trap to handle timing between the snippet and `v2.js` loading
+- **v3 new form builder** (iframe embed) — snippet listens for `hs-form-event:on-ready` and calls `HubSpotFormsV4.setFieldValue`
+
+**Cross-page persistence** — the advocate code is saved to `sessionStorage` on landing and read back on any subsequent page, so the friend does not need to convert on the landing page itself.
 
 ---
 
@@ -75,9 +80,9 @@ Optional enrichment: if advocate code is also injected into a hidden form field
 
 ## Open Questions
 
-1. **Fallback behavior** — if the friend has no referral context (no advocate code in URL, no `hubspotutk`), both hidden fields should submit empty and not block form submission.
-2. **Form ID targeting** — does HubSpot's embed API provide a reliable way to identify which form is rendering so we can scope injection to configured forms only?
-3. **Property creation at install** — should the app auto-create the `extole_advocate_code` Contact property on first setup, or require the admin to create it manually?
+1. **Fallback behavior** — if the friend has no referral context (no advocate code in URL), the hidden field submits empty and does not block form submission. ✓ Confirmed.
+2. **Form ID targeting** — both v2 (`options.formId`) and v3 (`event.detail.formId`) expose the form ID, so scoping injection to specific forms is supported. ✓ Resolved.
+3. **Property creation at install** — the app auto-creates the `extole_advocate_code` Contact property in the Form Instrumentation setup section. ✓ Resolved.
 4. **Register call fields** — confirm with Extole eng which fields are required vs optional in the register call, and whether Contact ID is supported as a supplementary identity key.
 
 ---

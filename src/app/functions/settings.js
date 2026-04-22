@@ -1310,7 +1310,7 @@ async function ensureContactProperty(hsToken, { name, label, description, groupN
     groupName,
     type: 'string',
     fieldType: 'text',
-    formField: false,
+    formField: true,
   };
 
   const created = await hsPost(hsToken, '/crm/v3/properties/contacts', body);

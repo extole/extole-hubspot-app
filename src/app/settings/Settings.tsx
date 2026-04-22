@@ -34,7 +34,6 @@ hubspot.extend(({ runServerlessFunction, context }) => (
   />
 ));
 
-const DEFAULT_HUBSPOTUTK_PROPERTY = 'extole_hubspotutk';
 const DEFAULT_ADVOCATE_CODE_PROPERTY = 'extole_advocate_code';
 const DEFAULT_REFERRAL_URL_PARAMS = 'extole_shareable_code';
 const DEFAULT_SHARE_LINK_PROPERTY = 'extole_share_link';
@@ -183,11 +182,6 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
   locale?: string;
   actor?: string;
 }) {
-  // ── Onboarding ──
-  const [hubspotutkStatus, setHubspotutkStatus] = useState<PropertyStatus>({ exists: null }); // null = checking
-  const [hubspotutkCreating, setHubspotutkCreating] = useState(false);
-  const [hubspotutkCreateResult, setHubspotutkCreateResult] = useState<string | null>(null);
-
   // ── Connection ──
   const [connectionStatus, setConnectionStatus] = useState<'unknown' | 'ok' | 'error'>('unknown');
   const [connectionDetail, setConnectionDetail] = useState('');
@@ -204,19 +198,13 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // ── Navigation ──
-  type NavTab = 'onboarding' | 'events' | 'forms' | 'sharelinks' | 'log';
-  const [activeTab, setActiveTab] = useState<NavTab>('onboarding');
+  type NavTab = 'events' | 'forms' | 'sharelinks' | 'log';
+  const [activeTab, setActiveTab] = useState<NavTab>('events');
 
   // Workflow table sort
   type SortCol = 'name' | 'object' | 'status' | 'created';
   const [sortCol, setSortCol] = useState<SortCol | null>(null);
   const [sortDir, setSortDir] = useState<'ascending' | 'descending'>('ascending');
-
-  // ── Backfill ──
-  const [contactTotal, setContactTotal] = useState<number | null>(null);
-  const [backfillRunning, setBackfillRunning] = useState(false);
-  const [backfillProgress, setBackfillProgress] = useState<{ enrolled: number; skipped: number; errors: number } | null>(null);
-  const [backfillDone, setBackfillDone] = useState(false);
 
   // ── Share Links ──
   const [campaigns, setCampaigns] = useState<{ id: string; name: string; programLabel: string }[]>([]);
@@ -245,7 +233,6 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
   const [clearLogLoading, setClearLogLoading] = useState(false);
 
   // ── Form Instrumentation ──
-  const [hubspotutkProperty, setHubspotutkProperty] = useState(DEFAULT_HUBSPOTUTK_PROPERTY);
   const [includeAdvocateCode, setIncludeAdvocateCode] = useState(true);
   const [advocateCodeProperty, setAdvocateCodeProperty] = useState(DEFAULT_ADVOCATE_CODE_PROPERTY);
   const [referralUrlParam, setReferralUrlParam] = useState(DEFAULT_REFERRAL_URL_PARAMS);
@@ -259,7 +246,6 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
 
   // ── Derived snippet ──
   const snippet = generateSnippet({
-    hubspotutkProperty,
     advocateCodeProperty: includeAdvocateCode ? advocateCodeProperty : '',
     referralUrlParams: referralUrlParam.split(',').map(s => s.trim()).filter(Boolean),
     formIds: formTargeting === 'specific' ? selectedFormIds : [],
@@ -286,20 +272,7 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
       const r = res.response || {};
       if (r.error) setWorkflowsError(r.error);
       setWorkflows(r.workflows ?? []);
-      // Fire checkProperties after getWorkflows completes — own chain, not returned
-      runServerlessFunction({
-        name: 'extole_settings',
-        parameters: { action: 'checkProperties', propertyNames: [DEFAULT_HUBSPOTUTK_PROPERTY] },
-        propertiesToSend: [],
-      }).then((res2: any) => {
-        const status = res2?.response?.properties?.[DEFAULT_HUBSPOTUTK_PROPERTY];
-        setHubspotutkStatus(status ?? { exists: false });
-      }).catch(() => {
-        setHubspotutkStatus({ exists: false });
-      });
-    }).catch(() => {
-      setHubspotutkStatus({ exists: false });
-    });
+    }).catch(() => {});
   }, []);
 
   // Load campaigns + check share link property when share links tab is first opened
@@ -316,7 +289,12 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
       if (!res.response) { setCampaignsError('Failed to load campaigns'); return; }
       const r = res.response;
       if (r.error) { setCampaignsError(r.error); setCampaigns([]); return; }
-      const camps = r.campaigns ?? [];
+      const seen = new Set<string>();
+      const camps = (r.campaigns ?? []).filter((c: { programLabel: string }) => {
+        if (seen.has(c.programLabel)) return false;
+        seen.add(c.programLabel);
+        return true;
+      });
       setCampaigns(camps);
       return runServerlessFunction({
         name: 'extole_settings',
@@ -448,43 +426,6 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
 
   // ─── Handlers ─────────────────────────────────────────────────────────────
 
-  function handleCheckHubspotutkProperty() {
-    if (hubspotutkStatus.exists === null) return;
-    setHubspotutkStatus({ exists: null });
-    runServerlessFunction({
-      name: 'extole_settings',
-      parameters: { action: 'checkProperties', propertyNames: [DEFAULT_HUBSPOTUTK_PROPERTY] },
-      propertiesToSend: [],
-    }).then((res: any) => {
-      const status = res.response?.properties?.[DEFAULT_HUBSPOTUTK_PROPERTY];
-      setHubspotutkStatus(status ?? { exists: false });
-    }).catch(() => {
-      setHubspotutkStatus({ exists: false });
-    });
-  }
-
-  function handleCreateHubspotutkProperty() {
-    setHubspotutkCreating(true);
-    setHubspotutkCreateResult(null);
-    runServerlessFunction({
-      name: 'extole_settings',
-      parameters: { action: 'createProperties', hubspotutkProperty: DEFAULT_HUBSPOTUTK_PROPERTY, advocateCodeProperty: '' },
-      propertiesToSend: [],
-    }).then((res) => {
-      const { created = [], errors = [] } = res.response || {};
-      setHubspotutkCreating(false);
-      if (errors.length === 0) {
-        setHubspotutkCreateResult(created.length ? 'Property created.' : 'Property already exists.');
-        handleCheckHubspotutkProperty();
-      } else {
-        setHubspotutkCreateResult(`Error: ${errors[0].error}`);
-      }
-    }).catch((err) => {
-      setHubspotutkCreating(false);
-      setHubspotutkCreateResult(`Error: ${err.message}`);
-    });
-  }
-
   function handleCreateAdvocateCodeProperty() {
     setAdvocateCodeCreating(true);
     setAdvocateCodeCreateResult(null);
@@ -529,40 +470,6 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
     }).finally(() => {
       setConnectionTesting(false);
     });
-  }
-
-  function handleLoadContactCount() {
-    runServerlessFunction({
-      name: 'extole_settings',
-      parameters: { action: 'getContactCount' },
-      propertiesToSend: [],
-    }).then((res) => {
-      setContactTotal(res.response?.total ?? null);
-    });
-  }
-
-  async function handleRunBackfill() {
-    setBackfillRunning(true);
-    setBackfillDone(false);
-    setBackfillProgress({ enrolled: 0, skipped: 0, errors: 0 });
-    let cursor: string | null = null;
-    let totalEnrolled = 0, totalSkipped = 0, totalErrors = 0;
-    while (true) {
-      const res = await runServerlessFunction({
-        name: 'extole_settings',
-        parameters: { action: 'runBackfillBatch', cursor, hubspotutkProperty },
-        propertiesToSend: [],
-      });
-      const batch = res.response || {};
-      totalEnrolled += batch.enrolled || 0;
-      totalSkipped += batch.skipped || 0;
-      totalErrors += (batch.errors || []).length;
-      cursor = batch.cursor || null;
-      setBackfillProgress({ enrolled: totalEnrolled, skipped: totalSkipped, errors: totalErrors });
-      if (batch.done || !cursor) break;
-    }
-    setBackfillRunning(false);
-    setBackfillDone(true);
   }
 
   function handleCreateShareLinkProperty() {
@@ -771,96 +678,15 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
     <Form>
       {/* ── Navigation ── */}
       <Flex direction="row" gap="extra-small">
-        <Button variant={activeTab === 'onboarding' ? undefined : 'transparent'} onClick={() => setActiveTab('onboarding')}>Onboarding</Button>
         <Button variant={activeTab === 'events' ? undefined : 'transparent'} onClick={() => setActiveTab('events')}>Event Configuration</Button>
         <Button variant={activeTab === 'forms' ? undefined : 'transparent'} onClick={() => setActiveTab('forms')}>Form Instrumentation</Button>
         <Button variant={activeTab === 'sharelinks' ? undefined : 'transparent'} onClick={() => setActiveTab('sharelinks')}>Share Links</Button>
-        <Button variant={activeTab === 'log' ? undefined : 'transparent'} onClick={() => setActiveTab('log')}>Log</Button>
+        <Button variant={activeTab === 'log' ? undefined : 'transparent'} onClick={() => setActiveTab('log')}>Settings Log</Button>
       </Flex>
       <Divider />
 
       {/* ══════════════════════════════════════════════════════════════════
-          SECTION 1 — ONBOARDING
-      ══════════════════════════════════════════════════════════════════ */}
-      {activeTab === 'onboarding' && (<>
-
-          {/* ── Step 1: hubspotutk property ── */}
-          <Heading>Step 1: Create Contact Property</Heading>
-          <Text>
-            Creates the extole_hubspotutk property on Contacts. This stores the HubSpot visitor
-            cookie at form submission and is used by both Form Instrumentation and Event
-            Configuration workflows.
-          </Text>
-
-          <Spacer />
-          {hubspotutkStatus.exists === null ? (
-            <LoadingSpinner label="Checking..." showLabel />
-          ) : hubspotutkStatus.exists ? (
-            <Flex direction="row" gap="small" align="center">
-              <StatusTag variant="success">
-                Created {formatDate(hubspotutkStatus.createdAt, locale)}
-              </StatusTag>
-              <Button onClick={handleCheckHubspotutkProperty} variant="transparent">Refresh</Button>
-            </Flex>
-          ) : (
-            <>
-              <Button onClick={handleCreateHubspotutkProperty} disabled={hubspotutkCreating}>
-                {hubspotutkCreating ? 'Creating...' : 'Create Property'}
-              </Button>
-              {hubspotutkCreateResult && <Text>{hubspotutkCreateResult}</Text>}
-            </>
-          )}
-
-          <Divider />
-
-          {/* ── Step 2: Enroll existing contacts ── */}
-          <Heading>Step 2: Enroll Existing Contacts</Heading>
-          <Text>
-            Registers your existing HubSpot contacts with Extole so they can participate in
-            referral programs immediately. Safe to re-run — Extole's register call is idempotent.
-          </Text>
-
-          {contactTotal !== null && (
-            <Text>{contactTotal.toLocaleString()} contacts to enroll</Text>
-          )}
-
-          <Spacer />
-          <Flex direction="row" gap="small" align="center">
-            <Button onClick={handleLoadContactCount} disabled={backfillRunning}>
-              Count Contacts
-            </Button>
-            <Button onClick={handleRunBackfill} disabled={backfillRunning} variant="primary">
-              {backfillRunning ? 'Enrolling...' : 'Enroll Contacts'}
-            </Button>
-          </Flex>
-
-          {backfillRunning && <LoadingSpinner label="Enrolling contacts..." showLabel />}
-
-          {backfillProgress && (
-            <Text>
-              Enrolled: {backfillProgress.enrolled} | Skipped: {backfillProgress.skipped} | Errors: {backfillProgress.errors}
-            </Text>
-          )}
-
-          {backfillDone && <Text>Enrollment complete.</Text>}
-
-          <Divider />
-
-          {/* ── Step 3: Add CRM Cards ── */}
-          <Heading>Step 3: Add CRM Cards</Heading>
-          <Text>
-            Add the Extole card to your Contact and Deal record pages so your team can see
-            referral activity inline within HubSpot CRM.
-          </Text>
-          <Spacer />
-          <Link href={{ url: `https://app.hubspot.com/connected-apps/${portalId}/cards`, external: true }}>
-            Open App Cards settings →
-          </Link>
-
-      </>)}
-
-      {/* ══════════════════════════════════════════════════════════════════
-          SECTION 2 — EVENT CONFIGURATION
+          SECTION 1 — EVENT CONFIGURATION
       ══════════════════════════════════════════════════════════════════ */}
       {activeTab === 'events' && (<>
 
@@ -1020,20 +846,13 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
 
           <Heading>Form Instrumentation</Heading>
           <Text>
-            Captures the HubSpot visitor cookie and referral code at form submission, storing
-            them on the Contact for Extole attribution. Skip this section if you're using
-            server-side identity resolution or don't need form-based attribution.
+            Captures the referral advocate code at form submission and stores it on the Contact
+            for Extole attribution. Before deploying the snippet, add extole_advocate_code as a
+            hidden field on each form you want to instrument in HubSpot's form builder.
+            Skip this section if you're using server-side identity resolution or don't need
+            form-based attribution.
           </Text>
 
-          <Input
-            label="hubspotutk Contact property"
-            name="hubspotutkProperty"
-            value={hubspotutkProperty}
-            onChange={(val) => setHubspotutkProperty(val)}
-            description="Contact property that stores the HubSpot visitor cookie for Extole lookup. This rarely needs to change."
-          />
-
-          <Spacer />
           <Toggle
             name="includeAdvocateCode"
             label="Capture advocate code"
@@ -1142,7 +961,7 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
 
           <Divider />
           <Text format={{ fontWeight: 'bold' }}>Generated Snippet</Text>
-          <Text>Copy this snippet and embed it on your site, after the HubSpot tracking script.</Text>
+          <Text>Copy this snippet and embed it on your site, after the HubSpot tracking script. Works with both classic (v2) and new form builder (v3) embeds.</Text>
           <TextArea
             label=""
             name="snippet"
@@ -1190,21 +1009,6 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
           </Text>
           <Spacer />
 
-          {campaignsLoading ? (
-            <LoadingSpinner label="Loading..." showLabel />
-          ) : campaignsError ? (
-            <StatusTag variant="danger">{campaignsError}</StatusTag>
-          ) : (
-            <Select
-              label="Campaign Targeting Label (optional)"
-              name="autoShareCampaign"
-              value={autoShareProgramLabel}
-              onChange={(val) => setAutoShareProgramLabel(val)}
-              options={[{ label: 'None', value: '' }, ...campaigns.map(c => ({ label: c.name, value: c.programLabel }))]}
-            />
-          )}
-
-          <Spacer />
           {autoShareEnabled === null ? (
             <LoadingSpinner label="Checking status..." showLabel />
           ) : (
@@ -1217,6 +1021,25 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
             />
           )}
           {autoShareError && <StatusTag variant="danger">{autoShareError}</StatusTag>}
+
+          {autoShareEnabled && (
+            <>
+              <Spacer />
+              {campaignsLoading ? (
+                <LoadingSpinner label="Loading..." showLabel />
+              ) : campaignsError ? (
+                <StatusTag variant="danger">{campaignsError}</StatusTag>
+              ) : (
+                <Select
+                  label="Campaign Targeting Label (optional)"
+                  name="autoShareCampaign"
+                  value={autoShareProgramLabel}
+                  onChange={(val) => setAutoShareProgramLabel(val)}
+                  options={[{ label: 'None', value: '' }, ...campaigns.map(c => ({ label: c.name, value: c.programLabel }))]}
+                />
+              )}
+            </>
+          )}
 
           <Divider />
 
@@ -1266,8 +1089,8 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
       ══════════════════════════════════════════════════════════════════ */}
       {activeTab === 'log' && (<>
 
-          <Heading>Activity Log</Heading>
-          <Text>Recent actions performed in this app, newest first.</Text>
+          <Heading>Settings Log</Heading>
+          <Text>Configuration changes made in this app, newest first.</Text>
           <Spacer />
 
           {logLoading ? (
@@ -1610,27 +1433,21 @@ function EventForm({
 
 // ─── Snippet Generator ────────────────────────────────────────────────────────
 
-function generateSnippet({ hubspotutkProperty, advocateCodeProperty, referralUrlParams, formIds }: {
-  hubspotutkProperty: string;
+function generateSnippet({ advocateCodeProperty, referralUrlParams, formIds }: {
   advocateCodeProperty: string;
   referralUrlParams: string[];
   formIds: string[];
 }): string {
-  const formIdsJson = formIds.length > 0 ? JSON.stringify(formIds) : '[]';
   const paramsJson = referralUrlParams.length > 0 ? JSON.stringify(referralUrlParams) : JSON.stringify(['extole_shareable_code']);
-  return `<!-- Extole Form Configurator — place anywhere on the page -->
+  const formIdsJson = JSON.stringify(formIds);
+  return `<!-- Extole Form Configurator — place anywhere on the page, before forms load -->
 <script>
 (function() {
-  var HUBSPOTUTK_PROPERTY = '${hubspotutkProperty}';
   var ADVOCATE_CODE_PROPERTY = '${advocateCodeProperty}';
   var REFERRAL_URL_PARAMS = ${paramsJson}; // first match wins
   var FORM_IDS = ${formIdsJson}; // empty = all forms
-  var SESSION_KEY = 'extole_advocate_code';
-
-  function getCookie(name) {
-    var match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
-    return match ? decodeURIComponent(match[2]) : '';
-  }
+  var STORAGE_KEY = 'extole_advocate_code';
+  var COOKIE_MAX_AGE = 30 * 24 * 60 * 60; // 30 days in seconds
 
   function getFirstUrlParam(names) {
     for (var i = 0; i < names.length; i++) {
@@ -1640,74 +1457,109 @@ function generateSnippet({ hubspotutkProperty, advocateCodeProperty, referralUrl
     return '';
   }
 
-  // Persist advocate code to sessionStorage on landing so it survives navigation
+  function isValidCode(value) {
+    return typeof value === 'string' && value.length > 0 && value.length <= 128 &&
+      /^[A-Za-z0-9._-]+$/.test(value);
+  }
+
+  function setCookie(value) {
+    document.cookie = STORAGE_KEY + '=' + encodeURIComponent(value) +
+      '; path=/; max-age=' + COOKIE_MAX_AGE + '; SameSite=Lax';
+  }
+
+  function getCookie() {
+    var match = document.cookie.match(new RegExp('(^|;\\s*)' + STORAGE_KEY + '=([^;]*)'));
+    return match ? decodeURIComponent(match[2]) : '';
+  }
+
+  function setLocalStorage(value) {
+    try { window.localStorage.setItem(STORAGE_KEY, value); } catch(e) {}
+  }
+
+  function getLocalStorage() {
+    try { return window.localStorage.getItem(STORAGE_KEY) || ''; } catch(e) { return ''; }
+  }
+
+  // On landing: persist advocate code to cookie + localStorage so it survives navigation and tab changes
   (function() {
     var code = getFirstUrlParam(REFERRAL_URL_PARAMS);
-    if (code) { try { sessionStorage.setItem(SESSION_KEY, code); } catch(e) {} }
+    if (isValidCode(code)) {
+      setCookie(code);
+      setLocalStorage(code);
+    }
   })();
 
   function getAdvocateCode() {
     var fromUrl = getFirstUrlParam(REFERRAL_URL_PARAMS);
-    if (fromUrl) return fromUrl;
-    try { return sessionStorage.getItem(SESSION_KEY) || ''; } catch(e) { return ''; }
+    if (isValidCode(fromUrl)) return fromUrl;
+    var fromCookie = getCookie();
+    if (isValidCode(fromCookie)) return fromCookie;
+    var fromStorage = getLocalStorage();
+    if (isValidCode(fromStorage)) return fromStorage;
+    return '';
   }
 
   function shouldInstrument(formId) {
-    return FORM_IDS.length === 0 || FORM_IDS.indexOf(formId) !== -1;
+    return !FORM_IDS.length || FORM_IDS.indexOf(formId) !== -1;
   }
 
-  function injectField(form, name, value) {
+  // ── v2 classic forms (hbspt.forms.create) ──
+  // Sets the value of an existing hidden field — does not inject new fields.
+  // Add ADVOCATE_CODE_PROPERTY as a hidden field in HubSpot's form builder for each form.
+  function setHiddenField(form, name, value) {
     if (!name || !value) return;
-    var el = form.querySelector('input[name="' + name + '"]');
-    if (el) { el.value = value; return; }
-    el = document.createElement('input');
-    el.type = 'hidden'; el.name = name; el.value = value;
-    form.appendChild(el);
+    var el = form.querySelector('[name="' + name + '"]');
+    if (el) el.value = value;
   }
 
-  function instrumentForm(form, formId) {
-    if (!shouldInstrument(formId)) return;
-    injectField(form, HUBSPOTUTK_PROPERTY, getCookie('hubspotutk'));
-    if (ADVOCATE_CODE_PROPERTY) injectField(form, ADVOCATE_CODE_PROPERTY, getAdvocateCode());
-  }
-
-  function injectIntoData(data, name, value) {
+  function updateDataField(data, name, value) {
     if (!name || !value) return;
     for (var i = 0; i < data.length; i++) {
       if (data[i].name === name) { data[i].value = value; return; }
     }
-    data.push({ name: name, value: value });
   }
 
-  function wrapForms(forms) {
-    if (forms._extoleWrapped) return;
-    forms._extoleWrapped = true;
-    var orig = forms.create;
-    forms.create = function(options) {
+  function makeWrappedCreate(orig) {
+    return function(options) {
+      if (!shouldInstrument(options && options.formId)) return orig.call(this, options);
       var opts = {};
       for (var k in options) { if (options.hasOwnProperty(k)) opts[k] = options[k]; }
       var origOnReady = opts.onFormReady;
       var origOnBeforeSubmit = opts.onBeforeFormSubmit;
-      // onFormReady: inject into DOM form element
       opts.onFormReady = function($form) {
-        var form = ($form && $form[0]) ? $form[0] : $form;
-        if (form) instrumentForm(form, opts.formId);
+        var code = getAdvocateCode();
+        if (code) {
+          var form = ($form && $form[0]) ? $form[0] : $form;
+          if (form) setHiddenField(form, ADVOCATE_CODE_PROPERTY, code);
+        }
         if (origOnReady) origOnReady.apply(this, arguments);
       };
-      // onBeforeFormSubmit: inject into submission data array (fallback for cases where onFormReady doesn't fire)
       opts.onBeforeFormSubmit = function($form, data) {
-        if (!shouldInstrument(opts.formId)) return;
-        injectIntoData(data, HUBSPOTUTK_PROPERTY, getCookie('hubspotutk'));
-        if (ADVOCATE_CODE_PROPERTY) injectIntoData(data, ADVOCATE_CODE_PROPERTY, getAdvocateCode());
+        var code = getAdvocateCode();
+        if (code) updateDataField(data, ADVOCATE_CODE_PROPERTY, code);
         if (origOnBeforeSubmit) origOnBeforeSubmit.apply(this, arguments);
       };
       return orig.call(this, opts);
     };
   }
 
+  function wrapForms(forms) {
+    if (forms._extoleWrapped) return;
+    forms._extoleWrapped = true;
+    if (forms.create) {
+      forms.create = makeWrappedCreate(forms.create);
+    } else {
+      var _create;
+      Object.defineProperty(forms, 'create', {
+        configurable: true,
+        get: function() { return _create; },
+        set: function(fn) { _create = fn ? makeWrappedCreate(fn) : fn; }
+      });
+    }
+  }
+
   function watchHbspt(hbspt) {
     if (hbspt.forms) { wrapForms(hbspt.forms); return; }
-    // hbspt exists but forms not yet — watch for forms to be assigned
     var _forms;
     Object.defineProperty(hbspt, 'forms', {
       configurable: true,
@@ -1716,18 +1568,27 @@ function generateSnippet({ hubspotutkProperty, advocateCodeProperty, referralUrl
     });
   }
 
-  // Case 1: hbspt already fully loaded
-  if (window.hbspt) { watchHbspt(window.hbspt); return; }
+  if (window.hbspt) { watchHbspt(window.hbspt); }
+  else {
+    var _hbspt;
+    Object.defineProperty(window, 'hbspt', {
+      configurable: true,
+      get: function() { return _hbspt; },
+      set: function(val) { _hbspt = val; if (val) watchHbspt(val); }
+    });
+  }
 
-  // Case 2: hbspt not yet defined — intercept when it gets assigned
-  var _hbspt;
-  Object.defineProperty(window, 'hbspt', {
-    configurable: true,
-    get: function() { return _hbspt; },
-    set: function(val) {
-      _hbspt = val;
-      if (val) watchHbspt(val);
-    }
+  // ── v3 new form builder (HubSpotFormsV4 API) ──
+  // Add ADVOCATE_CODE_PROPERTY as a hidden field in HubSpot's form builder for each form.
+  window.addEventListener('hs-form-event:on-ready', function(event) {
+    var code = getAdvocateCode();
+    if (!code || !ADVOCATE_CODE_PROPERTY) return;
+    var detail = event.detail || {};
+    if (!shouldInstrument(detail.formId)) return;
+    try {
+      var hsForm = window.HubSpotFormsV4 && window.HubSpotFormsV4.getFormFromEvent(event);
+      if (hsForm) hsForm.setFieldValue('0-1/' + ADVOCATE_CODE_PROPERTY, code);
+    } catch(e) {}
   });
 })();
 </script>`;

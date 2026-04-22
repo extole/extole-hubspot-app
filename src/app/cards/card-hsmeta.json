@@ -2,7 +2,7 @@
   "uid": "extole_contact_card",
   "type": "card",
   "config": {
-    "name": "Extole Referral",
+    "name": "Extole Activity",
     "location": "crm.record.sidebar",
     "entrypoint": "/app/cards/NewCard.tsx",
     "objectTypes": ["contacts"]

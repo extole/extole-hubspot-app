@@ -1,7 +1,13 @@
-# Extole HubSpot App — Install Guide
+# Extole HubSpot App — Installation Guide
 
-This guide covers installing and configuring the Extole HubSpot app for a client portal.
-Intended audience: Extole implementation team.
+## Overview
+
+Installation takes about 20–30 minutes. After completing these steps the app is fully operational:
+- HubSpot record changes fire events to Extole in real time
+- Referral attribution is captured at form submission and stored on the Contact record
+- Share links are generated for new contacts and written back to HubSpot
+
+**Intended audience:** Extole implementation team.
 
 ---
 
@@ -11,31 +17,29 @@ Before starting, confirm the following with the client:
 
 | Requirement | Details |
 |---|---|
-| **HubSpot tier** | Operations Hub **Professional** or higher — required for serverless functions. Starter cannot run this app. |
-| **HubSpot role** | Portal admin access (to install apps and create workflows) |
-| **Extole API token** | Bearer token for the client's Extole account |
-| **Website tech** | HubSpot tracking script and HubSpot-embedded forms deployed on site (required for Form Configurator; Event Configurator works without it) |
-| **Extole core.js** | Already deployed on client site (standard for all Extole customers) |
+| **HubSpot tier** | Operations Hub **Professional** or higher — required for serverless functions. Starter tier cannot run this app. |
+| **HubSpot role** | Portal admin access — required to install apps and create workflows |
+| **Extole API token** | Long-lived bearer token for the client's Extole account |
+| **HubSpot-embedded forms** | Required for Form Instrumentation; Event Configuration and Share Links work without it |
 
 ---
 
 ## Step 1 — Install the App
 
-Send the client the private install link. The client must be a **portal admin** to complete installation.
+Send the client the private install link. The client (or you, if you have admin access to their portal) must be a **portal admin** to complete installation.
 
-*[TODO: confirm private install link format and where Extole hosts/shares it — e.g. a link in the Extole dashboard, a direct URL from Extole support, etc.]*
-
-After install, the app appears in **Settings → Integrations** in the client's HubSpot portal.
+After install, the app appears in the HubSpot portal under **Settings → Integrations**.
 
 ---
 
 ## Step 2 — Connect Extole
 
-Open **Settings → Integrations → Extole** in the client's HubSpot portal.
-
-1. In the **Connection** section, paste the client's Extole API token
-2. Click **Test Connection** — confirm it shows green / connected
-3. Click **Save**
+1. Open the Extole app from the HubSpot App Marketplace sidebar or navigate to it via the main nav
+2. In the **Settings** tab, find the **API Token** field
+3. Paste the client's Extole API token
+4. Set the **Environment** to `production` (or `sandbox` for testing)
+5. Click **Test Connection** — confirm it shows green
+6. Click **Save**
 
 If the connection test fails, verify the token has API access on the client's Extole account.
 
@@ -43,52 +47,53 @@ If the connection test fails, verify the token has API access on the client's Ex
 
 ## Step 3 — Create Contact Properties
 
-In the **Properties** section of the settings page:
+The Form Instrumentation snippet and Share Links feature write data to custom Contact properties. These must exist before using either feature.
 
-1. Confirm the property names (defaults are `extole_hubspotutk` and optionally `extole_advocate_code`)
+In the **Event Configuration** tab, find the **Properties** section:
+
+1. Confirm the property names (defaults: `extole_advocate_code`, `extole_share_link`)
 2. Click **Create Properties**
 
-This creates the custom Contact properties that the Form Configurator snippet writes into.
-The operation is idempotent — safe to run again if already present.
+This creates the properties if they don't exist. The operation is idempotent — safe to run again.
 
-**Why these properties exist:**
-- `extole_hubspotutk` — stores the HubSpot visitor cookie captured at form submission; used by Extole to link the friend Contact back to the advocate who referred them
-- `extole_advocate_code` — optional; stores the advocate code directly on the Contact for HubSpot-side reporting
+| Property | Purpose |
+|---|---|
+| `extole_advocate_code` | Advocate code captured at form submission; used for referral attribution |
+| `extole_share_link` | Share link URL written back from Extole; displayed in HubSpot for the contact |
+
+> If the client's Extole program uses `hubspotutk` for attribution (legacy), also create `extole_hubspotutk`. Most new implementations use the advocate code approach; skip this unless the program requires it.
 
 ---
 
-## Step 4 — Configure Events (Workflows)
+## Step 4 — Configure Event Workflows
 
-In the **Event Configurator** section, create one workflow per Extole event the client needs.
+In the **Event Configuration** tab, create one workflow per Extole event the client needs.
 
 ### Minimum recommended events
 
 | Object | Trigger | Event Name | Purpose |
 |---|---|---|---|
-| Contact | Record created | `hubspot_contact_created` | Friend enters CRM — includes hubspotutk for advocate attribution |
+| Contact | Record created | `hubspot_contact_created` | Friend enters CRM — triggers advocate attribution lookup in Extole |
 | Deal | Record created | `hubspot_deal_created` | Opportunity opened |
 | Deal | Field changed to value: `dealstage` = `closedwon` | `hubspot_deal_closed_won` | Conversion — triggers advocate reward |
 
 ### Creating a workflow
 
 1. Click **Add Workflow**
-2. Set **Event Name** — use the Extole event name (e.g. `hubspot_deal_closed_won`)
+2. Set **Event Name** — the Extole event name (e.g. `hubspot_deal_closed_won`)
 3. Set **Object** — Contact, Deal, Company, etc.
 4. Set **Trigger**:
    - **Record created** — fires on any new record of that type
-   - **Field changed** — fires any time the selected field changes (re-enrollment enabled)
-   - **Field changed to value** — fires when a field reaches a specific value (e.g. dealstage → closedwon)
-5. Add **Field Mappings** — map HubSpot properties to Extole event payload keys. Recommended:
-   - For Contact events: `email`, `hs_object_id` (as `contact_id`)
-   - For Deal events: `hs_object_id` (as `deal_id`), `amount`, `dealname`
+   - **Field changed** — fires any time the selected field changes
+   - **Field changed to value** — fires when a field reaches a specific value (e.g. `dealstage` → `closedwon`)
+5. Add **Field Mappings** — map HubSpot properties to Extole event payload keys. Default mappings are pre-filled per object type:
+   - Contact: `email`, `contact_id`, `first_name`, `last_name`, `hubspotutk`
+   - Deal: `deal_id`, `deal_name`, `amount`, `close_date`
 6. Click **Create Workflow**
 
-The workflow is created in HubSpot and enabled immediately. It appears in the workflow table
-and can be edited, toggled, or deleted from there.
+The workflow is created and enabled immediately.
 
-### Field names
-
-For Deal field triggers, common HubSpot internal property names:
+### Common HubSpot field API names
 
 | Label | API name |
 |---|---|
@@ -96,69 +101,91 @@ For Deal field triggers, common HubSpot internal property names:
 | Amount | `amount` |
 | Close Date | `closedate` |
 | Deal Name | `dealname` |
+| Lifecycle Stage | `lifecyclestage` |
 
 ---
 
-## Step 5 — Deploy Form Snippet (if using Form Configurator)
+## Step 5 — Deploy Form Snippet
 
-Skip this step if the client is not using HubSpot-embedded forms.
+*Skip this step if the client does not use HubSpot-embedded forms.*
 
-### 5a — Add hidden field to each form
+The Form Instrumentation snippet captures the advocate code from the referral URL and injects it into HubSpot form submissions so that friend Contacts are attributed to the correct advocate.
 
-For every HubSpot form you want to instrument, add `extole_advocate_code` as a hidden field
-in HubSpot's form builder. This is a one-time setup per form.
+### 5a — Add hidden field to each HubSpot form
 
-> **Why this is required:** HubSpot's form submission pipeline only saves fields that are
-> explicitly defined on the form (`renderedFieldsIds`). Fields injected client-side without
-> a corresponding form definition are silently dropped by the server.
+For every form you want to instrument, add `extole_advocate_code` as a hidden field in HubSpot's form builder.
 
-To add the hidden field:
+> **Why this is required:** HubSpot's server only saves fields explicitly defined on the form. Values injected client-side for fields not on the form are silently dropped.
+
 1. Open the form in HubSpot's form builder
-2. Add a field → choose **Contact property** → select `Extole Advocate Code` (or your configured property)
-3. Mark it as hidden
+2. Add a field → choose **Contact property** → select `Extole Advocate Code`
+3. Set it to hidden
 4. Save the form
 
-### 5b — Deploy the snippet
+Repeat for each form you want to instrument.
 
-In the **Form Configurator** section of the Extole app:
+### 5b — Get and deploy the snippet
 
-1. Confirm the advocate code URL parameter (default: `extole_shareable_code`)
-2. Configure form targeting (all forms, or specific form IDs)
-3. Copy the generated snippet
-4. Add the snippet to the client's site — it must load **before** any HubSpot form embeds
+In the **Form Instrumentation** tab:
 
-The snippet:
-- Reads the advocate code from the landing URL param and persists it in `sessionStorage`
-- On form ready, sets the value of the `extole_advocate_code` hidden field (v2 classic forms)
-- On form ready, sets the field value via `HubSpotFormsV4` API (v3 new form builder)
-- Never creates new form fields — only sets values of fields already on the form
-- Never blocks form submission (silently skips if no referral context is present)
+1. Set the **Advocate Code Property** (default: `extole_advocate_code`) — must match the property name in Step 3
+2. Set the **Referral URL Params** (default: `extole_shareable_code`) — the URL parameter name Extole puts on share links
+3. Optionally set form targeting (all forms, or specific form IDs)
+4. Copy the generated snippet
+5. Add the snippet to the client's site — it must load **before** any HubSpot form script
 
----
+**Where to place it:** In the `<head>` of every page where a HubSpot form may appear, before the `//js.hsforms.net/...` script tag.
 
-## Step 6 — Backfill Existing Contacts (optional)
-
-In the **Backfill** section:
-
-1. Review the estimated contact count
-2. Click **Start Backfill**
-3. Monitor progress — the UI polls and shows enrolled / skipped / errors
-4. The operation is idempotent (safe to re-run)
-
-This seeds existing Contacts into Extole so historical contacts are known to the platform.
-Net-new contacts are handled automatically by the Contact Created workflow from Step 4.
+**How it works:**
+1. When a friend lands via a share link (URL has `?extole_shareable_code=<code>`), the snippet stores the code in a 30-day cookie and localStorage
+2. On that page, and on every subsequent page the friend navigates to, the snippet injects `extole_advocate_code=<code>` as a URL param via `window.history.replaceState` before any HubSpot form loads
+3. HubSpot reads URL params at form init time and pre-populates the hidden `extole_advocate_code` field natively
+4. The friend can convert on any page — the referral code persists across the entire visit
 
 ---
 
-## Step 7 — Verify End-to-End
+## Step 6 — Configure Share Links
+
+In the **Share Links** tab:
+
+1. Set the **Share Link Property** (default: `extole_share_link`) — the Contact property that will receive the generated share link URL
+2. Enable **Auto-generate Share Links** to create a share link for every new Contact automatically
+3. Optionally select a **Campaign Targeting Label** to scope share links to a specific Extole program
+4. Click **Save**
+
+### Backfill existing contacts
+
+To generate share links for contacts that existed before the app was installed:
+
+1. Click **Run Backfill**
+2. Monitor progress — the UI polls and shows processed / errors counts
+3. The operation is idempotent (safe to re-run; contacts that already have a share link are skipped)
+
+---
+
+## Step 7 — Enable the CRM Card
+
+The Extole app includes a sidebar card on the Contact record that shows the captured advocate code and HubSpot visitor ID.
+
+In HubSpot:
+
+1. Open any Contact record
+2. In the right sidebar, click **Customize** (or the settings icon)
+3. Find **Extole Activity** in the available cards list and add it
+4. Save the layout
+
+The card will show "No referral data captured" for contacts without attribution data, and will display the advocate code once form instrumentation captures it.
+
+---
+
+## Step 8 — Verify End-to-End
 
 ### Verify event delivery
 
-After creating the Contact Created workflow, create a test contact in HubSpot. Confirm
-the event arrives in Extole:
+After creating the Contact Created workflow, create a test contact in HubSpot. Confirm the event arrives in Extole:
 
 ```bash
-extole stream --app-type hubspot_crm --sandbox    # watch for incoming events
+extole stream --app-type hubspot_crm --sandbox
 ```
 
 Or check a specific person:
@@ -169,19 +196,35 @@ extole person get --email test@example.com
 
 ### Verify referral attribution
 
-Full attribution requires a friend to arrive via a share link and submit a form. In staging:
+Full attribution requires a friend to arrive via a share link and submit a form. In a staging or test environment:
 
-1. Get an advocate's share link from Extole
-2. Visit the client's site via that link (sets referral context in Extole + hubspotutk)
-3. Submit a HubSpot form
-4. Check that the new Contact has `extole_advocate_code` populated with the advocate's code
-5. Check that the `hubspot_contact_created` event arrived in Extole
+1. Get an advocate's share link from Extole (or construct `https://<site>?extole_shareable_code=<code>`)
+2. Visit the client's site via that link — confirm the URL param is present
+3. Navigate to another page — confirm the snippet injects `extole_advocate_code` into the URL via `replaceState`
+4. Submit a HubSpot form
+5. Check that the new Contact has `extole_advocate_code` populated with the code
+6. Confirm the `hubspot_contact_created` event arrived in Extole
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| Test Connection fails | Token wrong or expired — re-paste in Settings |
+| Workflow fires but no event in Extole | Check the EXTOLE_API_TOKEN secret is set in the app — Settings → Save may be needed after first install |
+| `extole_advocate_code` empty on Contact | Hidden field not added to form in form builder (Step 5a); or snippet not loading before form script |
+| Form snippet has no effect | Snippet must load before `//js.hsforms.net/...` — check script order in `<head>` |
+| Share link backfill shows errors | Extole API token lacks shareables scope; or contacts have no email address |
+| CRM card not showing | Layout customization not saved per Step 7 |
+
+For deeper debugging, check the **Settings Log** tab for recent configuration actions and errors.
 
 ---
 
 ## Known Limitations
 
-- **Cross-device attribution** — `hubspotutk` is browser-scoped. A friend who clicks on mobile and converts on desktop loses the referral association. Document as a known gap.
-- **Per-form hidden field setup required** — HubSpot's server filters form submissions to fields explicitly defined on the form (`renderedFieldsIds`). Client-side injection of unknown fields is silently dropped. The snippet only sets the value of existing hidden fields; each form must have `extole_advocate_code` added in the form builder once.
-- **HubSpot-native forms only** — the Form Configurator only works with HubSpot's JS-embedded forms (classic v2 and new form builder v3). Typeform, Marketo, and custom HTML forms are not supported. Clients using non-HubSpot forms can still use the Event Configurator for downstream events; referral attribution requires the standard Extole web instrumentation path.
+- **Cross-device attribution** — the advocate code cookie is browser-scoped. A friend who clicks on mobile and converts on a different device loses the referral association. Document this gap with the client.
+- **HubSpot-native forms only** — Form Instrumentation works with HubSpot's JS-embedded forms (v2 classic and v3 new form builder). Typeform, Marketo, and custom HTML forms are not supported.
 - **Operations Hub Professional required** — Starter tier clients cannot use this app. Must be confirmed before implementation.
+- **Share link label** — A default campaign label (`exhsappd`) is applied to all share links until the Extole shareables API makes the label optional. If the client's program does not have this label, share link creation will fail. Contact Extole support to ensure the label exists on the client's program.

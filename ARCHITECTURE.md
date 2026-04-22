@@ -1,0 +1,239 @@
+# Extole HubSpot App — Internal Architecture
+
+## Overview
+
+The app has three independent features that share a common auth and settings layer:
+
+- **Event Configuration** — Admin defines record-triggered events in the UI. The app creates a Custom Workflow Action; HubSpot invokes it when a matching record change occurs. The dispatch function fires the event to Extole in real time.
+- **Form Instrumentation** — App generates a JavaScript snippet for the client's site. The snippet captures the advocate code from the referral URL and persists it across page navigation so it can be injected into HubSpot forms, closing the friend attribution loop.
+- **Share Links** — App auto-generates Extole share links for Contacts and writes them back to a configurable Contact property. Supports auto-generate on create and bulk backfill for existing contacts.
+
+A CRM sidebar card on the Contact record surfaces the captured referral data at a glance.
+
+---
+
+## Component Map
+
+```
+UI Extensions                     Serverless Functions              External
+─────────────────────────────────  ────────────────────────────────  ────────────────────────
+Settings.tsx (settings page)  →   settings.js                   →   Extole API (api.extole.io)
+  Event Configuration                Settings CRUD                   HubSpot CRM API
+  Form Instrumentation               Workflow CRUD                   (api.hubapi.com)
+  Share Links                        Share link generation
+  Settings Log                       Log CRUD
+
+NewCard.tsx (contact sidebar)       dispatch.js                   →   Extole API
+  Shows advocate code + utk     ←   Workflow action callback           /v5/events
+  (reads Contact properties)        Fires event on record change
+```
+
+---
+
+## Auth Model
+
+The app uses two tokens for all external calls. Neither appears in client-side code.
+
+### Token 1 — HubSpot Private App Access Token
+
+Used for: all HubSpot CRM API calls (Contact property CRUD, workflow CRUD, contact search, log object reads/writes).
+
+```
+HubSpot serverless runtime
+  → auto-injects PRIVATE_APP_ACCESS_TOKEN into process.env
+  → settings.js and dispatch.js read it as: process.env.PRIVATE_APP_ACCESS_TOKEN
+  → appended as: Authorization: Bearer <token>
+  → HubSpot CRM API (api.hubapi.com)
+```
+
+**Scopes required** (defined in `app-hsmeta.json`):
+
+| Scope | Used for |
+|---|---|
+| `crm.objects.contacts.read/write` | Reading/writing Contact properties |
+| `crm.schemas.contacts.read/write` | Creating custom Contact properties |
+| `crm.objects.deals.read` | Deal event triggering |
+| `crm.schemas.deals/companies.read` | Property lookup for field mapping |
+| `tickets` | Ticket event triggering |
+| `automation` | Workflow CRUD |
+| `crm.schemas.custom.read/write` | Settings Log custom object |
+| `crm.objects.custom.read/write` | Settings Log entries |
+| `forms` | Form list for Form Configurator targeting |
+
+This token is auto-injected by HubSpot in the deployed environment. It is **not available during local `hs project dev`** — auth errors from serverless calls are expected in local development mode.
+
+---
+
+### Token 2 — Extole API Token
+
+Used for: connection test, event dispatch, share link generation, campaign list.
+
+```
+Admin pastes token in Settings → app stores it as HubSpot app secret: EXTOLE_API_TOKEN
+  → settings.js reads it as: context.secrets.EXTOLE_API_TOKEN
+  → dispatch.js reads it as: context.secrets.EXTOLE_API_TOKEN
+  → appended as: Authorization: Bearer <token>
+  → Extole API (api.extole.io)
+```
+
+**Setup:** Admin generates a long-lived token in the Extole Security Center, pastes it into the API Token field in the app's Settings tab, and clicks Test Connection.
+
+---
+
+## Event Dispatch Flow
+
+```mermaid
+sequenceDiagram
+    participant Record as HubSpot Record
+    participant WF as HubSpot Workflow\n(created by app)
+    participant Dispatch as dispatch.js\n(serverless function)
+    participant Extole as Extole API\n/v5/events
+
+    Record->>WF: record created / field changed
+    WF->>Dispatch: POST actionUrl\n{ object, inputFields: { eventName, ... } }
+    Dispatch->>Dispatch: build data payload\n(objectId, email, advocate_code, hubspotutk, ...)
+    Dispatch->>Extole: POST /v5/events\n{ event_name, data: { ...fields, app_type: hubspot_crm } }
+    Extole-->>Dispatch: HTTP response
+    Dispatch-->>WF: { status: SUCCESS / ERROR }
+```
+
+**Workflow structure:** Each event rule creates one HubSpot workflow with the "Send to Extole" custom action. The admin sets the trigger condition (record created, field changed, field changed to value) in HubSpot's workflow builder. The dispatch function owns the action step.
+
+**Identity payload:** dispatch.js always includes `email` and `{objectType}_id` (e.g. `contact_id`). If `extole_hubspotutk` and `extole_advocate_code` are present on the Contact, they are forwarded too, enabling Extole to link this event to the referral chain.
+
+---
+
+## Form Instrumentation Flow
+
+```mermaid
+sequenceDiagram
+    participant Friend as Friend's browser
+    participant Site as Client's site
+    participant Snippet as Extole snippet\n(client-side JS)
+    participant HS as HubSpot form
+
+    Friend->>Site: clicks share link → lands with ?extole_shareable_code=<code>
+    Site->>Snippet: snippet runs (blocking, before form loads)
+    Snippet->>Snippet: read extole_shareable_code from URL
+    Snippet->>Snippet: persist code in 30-day cookie + localStorage
+    Snippet->>Snippet: inject extole_advocate_code=<code> as URL param\n(window.history.replaceState — no page reload)
+    Friend->>HS: form initializes
+    HS->>HS: natively reads URL params → pre-populates hidden fields
+    Friend->>HS: submits form
+    HS->>HS: saves extole_advocate_code to Contact property
+```
+
+**Cross-page persistence:** Cookie and localStorage survive navigation. On any subsequent page load (Scenario B), the snippet reads the code back from cookie/localStorage and injects it via `replaceState` before the form loads — no URL param required in the current URL.
+
+**v2 vs v3 forms:** URL param pre-population works for both HubSpot form embeds:
+- **v2** (`hbspt.forms.create`) — form script reads URL params at create time
+- **v3** (`<div class="hs-form-frame">`) — deferred script reads URL params at load time
+
+The snippet also wraps `hbspt.forms.create` as a secondary mechanism (hooks `onFormReady` and `onBeforeFormSubmit`) for environments where replaceState timing is unreliable.
+
+**Required form setup:** HubSpot only saves fields explicitly defined on the form. `extole_advocate_code` must be added as a hidden field in the form builder for each form.
+
+---
+
+## Share Link Flow
+
+```mermaid
+sequenceDiagram
+    participant Settings as Settings.tsx
+    participant SFn as settings.js
+    participant Extole as Extole API\n/v5/shareables
+    participant HS as HubSpot CRM API
+
+    Settings->>SFn: action=runShareLinkBackfillBatch\n{ cursor, shareLinkProperty, campaignLabel }
+    SFn->>HS: GET /crm/v3/objects/contacts\n(paginated, batch of 50)
+    HS-->>SFn: contacts + email addresses
+    loop for each contact
+        SFn->>Extole: POST /v5/shareables\n{ email, label, partner_share_id }
+        Extole-->>SFn: { shareable_link }
+        SFn->>HS: PATCH /crm/v3/objects/contacts/{id}\n{ extole_share_link: shareable_link }
+    end
+    SFn-->>Settings: { cursor, processed, errors }
+    Settings->>Settings: poll until cursor exhausted
+```
+
+**Auto-generate on create:** The `toggleAutoShareLink` action creates/removes a HubSpot workflow that fires the share link generation action on Contact create. New contacts get a share link automatically without manual backfill.
+
+**Campaign targeting:** If a campaign label is configured, it is passed to the Extole shareables API to scope the share link to that program. Required while the default label workaround (`exhsappd`) is in place.
+
+---
+
+## Data Model
+
+### HubSpot Contact Properties (custom, created by the app)
+
+| Property | Type | Purpose |
+|---|---|---|
+| `extole_advocate_code` | Single-line text | Advocate code captured at form submission; written by Form Instrumentation snippet |
+| `extole_hubspotutk` | Single-line text | HubSpot visitor cookie captured at form submission; forwarded by dispatch to Extole for attribution lookup |
+| `extole_share_link` | Single-line text | Extole share link URL; written back by Share Links feature |
+
+### HubSpot Custom Object — Settings Log
+
+One entry per configuration action. Used by the Settings Log tab.
+
+```
+Extole_Settings_Log__c (custom object)
+  ├── action        (property_created, workflow_created, workflow_deleted, ...)
+  ├── actor         (email of the admin who performed the action)
+  ├── timestamp     (ISO string)
+  ├── details       (human-readable description)
+  └── status        (success | error)
+```
+
+### HubSpot Workflows (managed by app)
+
+One workflow per Event Configuration rule, plus one workflow for Auto Share Link if enabled. Workflows are standard HubSpot workflows — visible and editable in the HubSpot Workflows UI.
+
+---
+
+## Function Inventory
+
+### settings.js
+
+| Action | Description |
+|---|---|
+| `testConnection` | Verify Extole API token is valid |
+| `createProperties` | Ensure custom Contact properties exist (idempotent) |
+| `validateProperty` | Check if a specific property exists |
+| `checkProperties` | Bulk check property existence |
+| `getObjectTypes` | List available HubSpot object types |
+| `getObjectProperties` | List properties for a given object type |
+| `getWorkflows` | List all Extole-created workflows |
+| `getWorkflowConfig` | Get full config for a specific workflow |
+| `createWorkflow` | Create workflow + action for an event rule |
+| `updateWorkflow` | Update workflow event name or trigger config |
+| `deleteWorkflow` | Delete a workflow |
+| `toggleWorkflow` | Enable or disable a workflow |
+| `probeEnrollment` | Test-fire a workflow against a sample contact |
+| `getForms` | List HubSpot forms (for Form Configurator targeting) |
+| `getCampaigns` | List Extole campaigns (for Share Link campaign targeting) |
+| `createShareLinkProperty` | Ensure extole_share_link Contact property exists |
+| `runShareLinkBackfillBatch` | Process one paginated batch of contacts for share link backfill |
+| `getAutoShareLinkStatus` | Check whether auto-generate workflow is active |
+| `toggleAutoShareLink` | Enable or disable the auto-generate share link workflow |
+| `createLogSchema` | Ensure the Settings Log custom object exists |
+| `getLogEntries` | Retrieve Settings Log entries |
+| `clearLog` | Delete all Settings Log entries |
+
+### dispatch.js
+
+Single-purpose: receives HubSpot workflow action callback, builds event payload, fires to Extole `/v5/events`. Returns `{ status: SUCCESS/ERROR }` per HubSpot workflow action contract.
+
+---
+
+## Key Behaviors for Maintainers
+
+**PRIVATE_APP_ACCESS_TOKEN not available in local dev** — HubSpot only injects this token in the deployed runtime. Running `hs project dev` puts the portal in DEVELOPING LOCALLY mode, where calls from the local server cannot access `process.env.PRIVATE_APP_ACCESS_TOKEN`. All serverless calls that touch HubSpot APIs will fail with auth errors locally. Use `hs project upload` and test against the deployed build.
+
+**Share link label workaround** — The Extole shareables API currently requires a `label` parameter even for clients without program segmentation. The constant `DEFAULT_SHARE_LABEL = 'exhsappd'` in settings.js provides a fallback. Remove it (set to `null`) once the Extole API fixes this requirement (ticket open).
+
+**Workflow v3 vs v4 API** — Workflows are created via HubSpot's v4 automation API and listed/deleted via v4. The v3 API was initially used for listing but returned incomplete results and incompatible workflow IDs. All workflow operations should use v4 endpoints.
+
+**HubSpot Tabs/Tab components** — The Settings UI uses a custom state-based navigation pattern instead of HubSpot's `Tabs`/`Tab` components. HubSpot's tab components freeze the subtree and block async state updates from adding DOM elements. Do not revert to HubSpot tabs.
+
+**Log custom object schema** — The Settings Log custom object is created lazily on first log write. If the schema doesn't exist, `createLogSchema` is called automatically. The object type ID is stable per portal once created; do not delete the schema without clearing all log entries first.

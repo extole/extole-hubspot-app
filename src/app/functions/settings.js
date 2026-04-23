@@ -52,9 +52,6 @@ exports.main = async (context) => {
     case 'getContactCount':
       return handleGetContactCount(hsToken);
 
-    case 'runBackfillBatch':
-      return handleRunBackfillBatch(hsToken, extoleToken, params);
-
     case 'getObjectTypes':
       return handleGetObjectTypes(hsToken);
 
@@ -189,9 +186,13 @@ async function handleCreateProperties(hsToken, { hubspotutkProperty, advocateCod
   return { created, errors };
 }
 
+const CRM_PROPERTY_TYPE_MAP = {
+  contact: 'contacts', deal: 'deals', company: 'companies', ticket: 'tickets', quote: 'quotes',
+};
+
 async function handleValidateProperty(hsToken, { objectType, propertyName }) {
   if (!propertyName) return { valid: false };
-  const crmType = objectType === 'deal' ? 'deals' : 'contacts';
+  const crmType = CRM_PROPERTY_TYPE_MAP[objectType] || 'contacts';
   const res = await hsGet(hsToken, `/crm/v3/properties/${crmType}/${propertyName}`);
   return { valid: res.ok };
 }
@@ -210,65 +211,23 @@ async function handleGetContactCount(hsToken) {
   return { total: data.total ?? 0 };
 }
 
-async function handleRunBackfillBatch(hsToken, extoleToken, { cursor, hubspotutkProperty }) {
-  const property = hubspotutkProperty || 'extole_hubspotutk';
-  let url = `/crm/v3/objects/contacts?limit=${BATCH_SIZE}&properties=email,${property},extole_advocate_code`;
-  if (cursor) url += `&after=${cursor}`;
-
-  const response = await hsGet(hsToken, url);
-  if (!response.ok) {
-    return { error: `HubSpot API error: ${response.status}` };
-  }
-
-  const data = await response.json();
-  const contacts = data.results || [];
-  const nextCursor = data.paging?.next?.after || null;
-
-  let enrolled = 0;
-  let skipped = 0;
-  const errors = [];
-
-  for (const contact of contacts) {
-    const email = contact.properties?.email;
-    if (!email) { skipped++; continue; }
-
-    const contactData = {
-      contact_id: String(contact.id),
-      email,
-    };
-    if (contact.properties?.[property]) contactData.hubspotutk = contact.properties[property];
-    if (contact.properties?.extole_advocate_code) contactData.advocate_code = contact.properties.extole_advocate_code;
-
-    const result = await fireEvent(extoleToken, 'hubspot_contact_enrolled', contactData);
-    if (result.ok) {
-      enrolled++;
-    } else {
-      errors.push({ contactId: contact.id, status: result.status });
-    }
-  }
-
-  return {
-    enrolled,
-    skipped,
-    errors,
-    cursor: nextCursor,
-    done: !nextCursor,
-    batchSize: contacts.length,
-  };
-}
 
 
 async function handleGetWorkflows(hsToken) {
   // Use v4 flows API — returns all types (CONTACT_FLOW + PLATFORM_FLOW) with v4 IDs
-  // that are compatible with the delete/update endpoints.
-  const res = await fetch('https://api.hubapi.com/automation/v4/flows?limit=100', {
-    headers: { Authorization: `Bearer ${hsToken}` },
-  });
-  if (!res.ok) {
-    return { error: `HubSpot API error: ${res.status}`, workflows: [] };
-  }
-  const data = await res.json();
-  const extoleWorkflows = (data.results || [])
+  // that are compatible with the delete/update endpoints. Paginate to catch all workflows.
+  const allResults = [];
+  let after = null;
+  do {
+    const url = 'https://api.hubapi.com/automation/v4/flows?limit=100' + (after ? `&after=${after}` : '');
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${hsToken}` } });
+    if (!res.ok) return { error: `HubSpot API error: ${res.status}`, workflows: [] };
+    const data = await res.json();
+    allResults.push(...(data.results || []));
+    after = data.paging?.next?.after || null;
+  } while (after);
+
+  const extoleWorkflows = allResults
     .filter(w => w.name && w.name.startsWith('Extole'))
     .map(w => ({
       id: String(w.id),
@@ -1285,19 +1244,24 @@ async function handleClearLog(hsToken) {
   const objectTypeId = await getLogObjectTypeId(hsToken);
   if (!objectTypeId) return { cleared: 0 };
 
-  const res = await hsPost(hsToken, `/crm/v3/objects/${objectTypeId}/search`, {
-    filterGroups: [],
-    properties: ['eal_action'],
-    limit: 100,
-  });
-  if (!res.ok) return { error: 'Failed to fetch log entries' };
-  const data = await res.json();
-  const inputs = (data.results || []).map(r => ({ id: r.id }));
-  if (inputs.length === 0) return { cleared: 0 };
+  // Page through all entries and archive in batches — HubSpot batch/archive limit is 100
+  let after = null;
+  let totalCleared = 0;
+  do {
+    const body = { filterGroups: [], properties: ['eal_action'], limit: 100 };
+    if (after) body.after = after;
+    const res = await hsPost(hsToken, `/crm/v3/objects/${objectTypeId}/search`, body);
+    if (!res.ok) return { error: 'Failed to fetch log entries', cleared: totalCleared };
+    const data = await res.json();
+    const inputs = (data.results || []).map(r => ({ id: r.id }));
+    if (inputs.length === 0) break;
+    const archiveRes = await hsPost(hsToken, `/crm/v3/objects/${objectTypeId}/batch/archive`, { inputs });
+    if (!archiveRes.ok) return { error: 'Failed to archive log entries', cleared: totalCleared };
+    totalCleared += inputs.length;
+    after = data.paging?.next?.after || null;
+  } while (after);
 
-  const archiveRes = await hsPost(hsToken, `/crm/v3/objects/${objectTypeId}/batch/archive`, { inputs });
-  if (!archiveRes.ok) return { error: 'Failed to archive log entries' };
-  return { cleared: inputs.length };
+  return { cleared: totalCleared };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

@@ -435,7 +435,7 @@ async function handleCreateWorkflow(hsToken, extoleToken, { eventName, triggerOb
 
   const obj = triggerObject || 'contact';
   const objConfig = getObjConfig(obj);
-  const sourceCode = buildWorkflowSourceCode(hsToken, extoleToken, eventName, objConfig.crmPath, fieldMappings);
+  const sourceCode = buildWorkflowSourceCode(eventName, objConfig.crmPath, fieldMappings);
 
   const flow = {
     name: `Extole — ${eventName}`,
@@ -449,6 +449,7 @@ async function handleCreateWorkflow(hsToken, extoleToken, { eventName, triggerOb
       type: 'CUSTOM_CODE',
       runtime: 'NODE20X',
       inputFields: [],
+      secrets: ['EXTOLE_API_TOKEN'],
       sourceCode,
     }],
     enrollmentCriteria: buildEnrollmentCriteria(obj, triggerType, triggerProperty, triggerToValue),
@@ -555,7 +556,7 @@ async function handleUpdateWorkflow(hsToken, extoleToken, { flowId, eventName, t
 
   const obj = triggerObject || 'contact';
   const objConfig = getObjConfig(obj);
-  const sourceCode = buildWorkflowSourceCode(hsToken, extoleToken, eventName, objConfig.crmPath, fieldMappings);
+  const sourceCode = buildWorkflowSourceCode(eventName, objConfig.crmPath, fieldMappings);
 
   // GET current flow to preserve mutable fields not included in the edit form
   const getRes = await fetch(`https://api.hubapi.com/automation/v4/flows/${flowId}`, {
@@ -572,7 +573,7 @@ async function handleUpdateWorkflow(hsToken, extoleToken, { flowId, eventName, t
     : existing.enrollmentCriteria;
 
   const updatedActions = (existing.actions || []).map((a, i) =>
-    i === 0 ? { ...a, sourceCode } : a
+    i === 0 ? { ...a, sourceCode, secrets: ['EXTOLE_API_TOKEN'] } : a
   );
 
   const putBody = {
@@ -726,18 +727,20 @@ function parseWorkflowConfig(sourceCode) {
   }
 }
 
-function buildWorkflowSourceCode(hsToken, extoleToken, eventName, crmObjectType, fieldMappings) {
-  // Escape tokens for safe embedding in JS string literals
-  const escape = (s) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+function buildWorkflowSourceCode(eventName, crmObjectType, fieldMappings) {
+  // Tokens are NOT embedded — they are read from environment at runtime.
+  // HUBSPOT_PRIVATE_APP_ACCESS_TOKEN is auto-injected by HubSpot into custom code actions.
+  // EXTOLE_API_TOKEN must be declared in the action's secrets array (see handleCreateWorkflow).
+  const escape = (s) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '');
 
   return `
-const HS_TOKEN = '${escape(hsToken)}';
-const EXTOLE_TOKEN = '${escape(extoleToken)}';
 const EVENT_NAME = '${escape(eventName)}';
 const CRM_TYPE = '${crmObjectType}';
 const FIELD_MAPPINGS = ${JSON.stringify(fieldMappings || [])};
 
 exports.main = async (event) => {
+  const HS_TOKEN = process.env.HUBSPOT_PRIVATE_APP_ACCESS_TOKEN;
+  const EXTOLE_TOKEN = process.env.EXTOLE_API_TOKEN;
   const objectId = event.object.objectId;
 
   // Fetch object properties from HubSpot CRM
@@ -1020,7 +1023,8 @@ async function handleToggleAutoShareLink(hsToken, extoleToken, { programLabel, e
       type: 'CUSTOM_CODE',
       runtime: 'NODE20X',
       inputFields: [],
-      sourceCode: buildAutoShareLinkSourceCode(hsToken, extoleToken, programLabel || ''),
+      secrets: ['EXTOLE_API_TOKEN'],
+      sourceCode: buildAutoShareLinkSourceCode(programLabel || ''),
     }],
     enrollmentCriteria: buildEnrollmentCriteria('contact', 'RECORD_CREATED', null, null),
   };
@@ -1041,20 +1045,21 @@ async function handleToggleAutoShareLink(hsToken, extoleToken, { programLabel, e
   return { enabled: true, workflowId: String(createBody.id) };
 }
 
-function buildAutoShareLinkSourceCode(hsToken, extoleToken, programLabel) {
-  const escape = (s) => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+function buildAutoShareLinkSourceCode(programLabel) {
+  // Tokens are NOT embedded — read from environment at runtime.
+  const escape = (s) => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '');
   const resolvedLabel = programLabel || DEFAULT_SHARE_LABEL;
   const labelExpr = resolvedLabel ? `'${escape(resolvedLabel)}'` : 'null';
 
   return `
-const HS_TOKEN = '${escape(hsToken)}';
-const EXTOLE_TOKEN = '${escape(extoleToken)}';
 const PROGRAM_LABEL = ${labelExpr};
 const SHARE_LINK_PROPERTY = 'extole_share_link';
 const EXTOLE_API = 'https://api.extole.io';
 const HS_API = 'https://api.hubapi.com';
 
 exports.main = async (event) => {
+  const HS_TOKEN = process.env.HUBSPOT_PRIVATE_APP_ACCESS_TOKEN;
+  const EXTOLE_TOKEN = process.env.EXTOLE_API_TOKEN;
   const contactId = event.object.objectId;
 
   const hsRes = await fetch(HS_API + '/crm/v3/objects/contacts/' + contactId + '?properties=email', {

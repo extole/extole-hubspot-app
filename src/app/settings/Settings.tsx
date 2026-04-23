@@ -1489,6 +1489,21 @@ function generateSnippet({ advocateCodeProperty, referralUrlParams, formIds }: {
     }
   })();
 
+  // Inject advocate code as URL param — HubSpot reads URL params at form init time and
+  // pre-populates hidden fields natively. Must run before hbspt.forms.create loads.
+  // Blocking <script> in <head> guarantees correct timing.
+  (function() {
+    var code = getAdvocateCode();
+    if (!code || !ADVOCATE_CODE_PROPERTY) return;
+    try {
+      var url = new URL(window.location.href);
+      if (!url.searchParams.get(ADVOCATE_CODE_PROPERTY)) {
+        url.searchParams.set(ADVOCATE_CODE_PROPERTY, code);
+        window.history.replaceState(null, '', url.toString());
+      }
+    } catch(e) {}
+  })();
+
   function getAdvocateCode() {
     var fromUrl = getFirstUrlParam(REFERRAL_URL_PARAMS);
     if (isValidCode(fromUrl)) return fromUrl;
@@ -1504,19 +1519,20 @@ function generateSnippet({ advocateCodeProperty, referralUrlParams, formIds }: {
   }
 
   // ── v2 classic forms (hbspt.forms.create) ──
-  // Sets the value of an existing hidden field — does not inject new fields.
+  // DOM fallback: sets the hidden field value in case replaceState ran too late.
+  // replaceState (above) is the primary mechanism; this is belt-and-suspenders.
   // Add ADVOCATE_CODE_PROPERTY as a hidden field in HubSpot's form builder for each form.
-  function setHiddenField(form, name, value) {
-    if (!name || !value) return;
-    var el = form.querySelector('[name="' + name + '"]');
-    if (el) el.value = value;
-  }
-
   function updateDataField(data, name, value) {
     if (!name || !value) return;
     for (var i = 0; i < data.length; i++) {
       if (data[i].name === name) { data[i].value = value; return; }
     }
+  }
+
+  function setField(el, value) {
+    el.value = value;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
   function makeWrappedCreate(orig) {
@@ -1528,9 +1544,23 @@ function generateSnippet({ advocateCodeProperty, referralUrlParams, formIds }: {
       var origOnBeforeSubmit = opts.onBeforeFormSubmit;
       opts.onFormReady = function($form) {
         var code = getAdvocateCode();
-        if (code) {
-          var form = ($form && $form[0]) ? $form[0] : $form;
-          if (form) setHiddenField(form, ADVOCATE_CODE_PROPERTY, code);
+        if (code && ADVOCATE_CODE_PROPERTY) {
+          // $form[0] may be an INPUT — walk up to the enclosing <form>
+          var rawEl = ($form && $form[0]) ? $form[0] : $form;
+          var form = rawEl ? (rawEl.tagName === 'FORM' ? rawEl : (rawEl.form || rawEl.closest('form'))) : null;
+          if (form) {
+            var el = form.querySelector('[name="' + ADVOCATE_CODE_PROPERTY + '"]');
+            if (el) {
+              setField(el, code);
+            } else {
+              // Field not yet in DOM — observe until it appears
+              var observer = new MutationObserver(function() {
+                var el2 = form.querySelector('[name="' + ADVOCATE_CODE_PROPERTY + '"]');
+                if (el2) { setField(el2, code); observer.disconnect(); }
+              });
+              observer.observe(form, { childList: true, subtree: true });
+            }
+          }
         }
         if (origOnReady) origOnReady.apply(this, arguments);
       };

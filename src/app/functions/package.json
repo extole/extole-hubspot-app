@@ -1,5 +1,11 @@
 {
   "name": "example-function",
   "version": "0.1.0",
-  "dependencies": {}
+  "dependencies": {},
+  "devDependencies": {
+    "jest": "^30.3.0"
+  },
+  "scripts": {
+    "test": "jest"
+  }
 }

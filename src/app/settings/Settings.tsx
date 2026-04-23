@@ -431,7 +431,7 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
     setAdvocateCodeCreateResult(null);
     runServerlessFunction({
       name: 'extole_settings',
-      parameters: { action: 'createProperties', hubspotutkProperty: '', advocateCodeProperty },
+      parameters: { action: 'createProperties', advocateCodeProperty },
       propertiesToSend: [],
     }).then((res) => {
       const { created = [], errors = [] } = res.response || {};
@@ -1440,10 +1440,11 @@ function generateSnippet({ advocateCodeProperty, referralUrlParams, formIds }: {
 }): string {
   const paramsJson = referralUrlParams.length > 0 ? JSON.stringify(referralUrlParams) : JSON.stringify(['extole_shareable_code']);
   const formIdsJson = JSON.stringify(formIds);
+  const escapedProp = advocateCodeProperty.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   return `<!-- Extole Form Configurator — place anywhere on the page, before forms load -->
 <script>
 (function() {
-  var ADVOCATE_CODE_PROPERTY = '${advocateCodeProperty}';
+  var ADVOCATE_CODE_PROPERTY = '${escapedProp}';
   var REFERRAL_URL_PARAMS = ${paramsJson}; // first match wins
   var FORM_IDS = ${formIdsJson}; // empty = all forms
   var STORAGE_KEY = 'extole_advocate_code';

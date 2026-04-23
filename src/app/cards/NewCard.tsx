@@ -1,5 +1,4 @@
 import {
-  Divider,
   Flex,
   Text,
   hubspot,
@@ -10,15 +9,13 @@ hubspot.extend<'crm.record.sidebar'>(({ context }) => (
 ));
 
 function ExtoleContactCard({ properties }: { properties: Record<string, string> }) {
-  const hubspotutk = properties['extole_hubspotutk'];
   const advocateCode = properties['extole_advocate_code'];
-  const hasReferralData = !!hubspotutk || !!advocateCode;
 
   return (
     <Flex direction="column" gap="small">
       <Text format={{ fontWeight: 'bold' }}>Extole Referral</Text>
 
-      {!hasReferralData && (
+      {!advocateCode && (
         <Text>No referral data captured for this contact.</Text>
       )}
 
@@ -27,16 +24,6 @@ function ExtoleContactCard({ properties }: { properties: Record<string, string> 
           <Text format={{ fontWeight: 'bold' }}>Referred by</Text>
           <Text>{advocateCode}</Text>
         </Flex>
-      )}
-
-      {hubspotutk && (
-        <>
-          {advocateCode && <Divider />}
-          <Flex direction="row" gap="small" justifyContent="space-between">
-            <Text format={{ fontWeight: 'bold' }}>Session ID</Text>
-            <Text>{hubspotutk.slice(0, 16)}…</Text>
-          </Flex>
-        </>
       )}
     </Flex>
   );

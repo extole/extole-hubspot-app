@@ -42,9 +42,6 @@ exports.main = async (context) => {
   // Include email (primary Extole identity key)
   if (properties.email) data.email = properties.email;
 
-  // Include hubspotutk if present (enables Extole to look up advocate association)
-  if (properties.extole_hubspotutk) data.hubspotutk = properties.extole_hubspotutk;
-
   // Include advocate code if already captured on the contact
   if (properties.extole_advocate_code) data.advocate_code = properties.extole_advocate_code;
 

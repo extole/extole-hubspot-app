@@ -2,10 +2,8 @@
  * Extole Settings Function
  *
  * Handles all settings page operations via an `action` parameter:
- *   - createProperties: ensure extole_hubspotutk (+ optional extole_advocate_code) Contact properties exist
+ *   - createProperties: ensure extole_advocate_code Contact property exists
  *   - testConnection: verify Extole API token is valid
- *   - getContactCount: count contacts for backfill estimate
- *   - runBackfillBatch: process one batch of contacts, return cursor + progress
  */
 
 const HS_API_BASE = 'https://api.hubapi.com';
@@ -15,24 +13,7 @@ const BATCH_SIZE = 50;
 // Set to null once the API is fixed (ticket open). See: exhsappd = extole hubspot app default.
 const DEFAULT_SHARE_LABEL = 'exhsappd';
 
-async function testConnection(token) {
-  const res = await fetch(`${EXTOLE_API_BASE}/v4/tokens`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  return { ok: res.ok, status: res.status };
-}
-
-async function fireEvent(token, eventName, data) {
-  const res = await fetch(`${EXTOLE_API_BASE}/v5/events`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ event_name: eventName, data: { ...data, app_type: 'hubspot_crm' } }),
-  });
-  let body;
-  try { body = await res.json(); } catch { body = null; }
-  return { ok: res.ok, status: res.status, body };
-}
-
+const { testConnection } = require('./extole');
 
 exports.main = async (context) => {
   const hsToken = process.env.PRIVATE_APP_ACCESS_TOKEN;
@@ -48,9 +29,6 @@ exports.main = async (context) => {
 
     case 'validateProperty':
       return handleValidateProperty(hsToken, params);
-
-    case 'getContactCount':
-      return handleGetContactCount(hsToken);
 
     case 'getObjectTypes':
       return handleGetObjectTypes(hsToken);
@@ -78,9 +56,6 @@ exports.main = async (context) => {
 
     case 'getObjectProperties':
       return handleGetObjectProperties(hsToken, params);
-
-    case 'probeEnrollment':
-      return handleProbeEnrollment(hsToken, params);
 
     case 'getCampaigns':
       return handleGetCampaigns(extoleToken);
@@ -128,6 +103,7 @@ async function handleTestConnection(extoleToken) {
   };
 }
 
+// Note: always checks contact properties — all callers currently check contact properties only.
 async function handleCheckProperties(hsToken, { propertyNames }) {
   const results = {};
   for (const name of (propertyNames || [])) {
@@ -142,20 +118,11 @@ async function handleCheckProperties(hsToken, { propertyNames }) {
   return { properties: results };
 }
 
-async function handleCreateProperties(hsToken, { hubspotutkProperty, advocateCodeProperty }) {
+async function handleCreateProperties(hsToken, { advocateCodeProperty }) {
   const created = [];
   const errors = [];
 
   const toCreate = [];
-  if (hubspotutkProperty) {
-    toCreate.push({
-      name: hubspotutkProperty,
-      label: 'Extole HubSpot Visitor ID',
-      description: 'HubSpot visitor cookie (hubspotutk) captured at form submission for Extole referral attribution.',
-      groupName: 'contactinformation',
-    });
-  }
-
   if (advocateCodeProperty) {
     toCreate.push({
       name: advocateCodeProperty,
@@ -196,22 +163,6 @@ async function handleValidateProperty(hsToken, { objectType, propertyName }) {
   const res = await hsGet(hsToken, `/crm/v3/properties/${crmType}/${propertyName}`);
   return { valid: res.ok };
 }
-
-async function handleGetContactCount(hsToken) {
-  // List endpoint doesn't return total — use search which does
-  const response = await hsPost(hsToken, '/crm/v3/objects/contacts/search', {
-    filterGroups: [],
-    properties: ['email'],
-    limit: 1,
-  });
-  if (!response.ok) {
-    return { error: `HubSpot API error: ${response.status}` };
-  }
-  const data = await response.json();
-  return { total: data.total ?? 0 };
-}
-
-
 
 async function handleGetWorkflows(hsToken) {
   // Use v4 flows API — returns all types (CONTACT_FLOW + PLATFORM_FLOW) with v4 IDs
@@ -281,11 +232,13 @@ async function handleGetObjectTypes(hsToken) {
   if (!res.ok) return { objectTypes: standard };
 
   const data = await res.json();
-  const custom = (data.results || []).map(s => ({
-    value: s.objectTypeId,
-    label: s.labels?.singular || s.name,
-    objectTypeId: s.objectTypeId,
-  }));
+  const custom = (data.results || [])
+    .filter(s => s.name !== LOG_OBJECT_NAME)
+    .map(s => ({
+      value: s.objectTypeId,
+      label: s.labels?.singular || s.name,
+      objectTypeId: s.objectTypeId,
+    }));
 
   return { objectTypes: [...standard, ...custom] };
 }
@@ -605,8 +558,7 @@ function getDefaultProperties(objectType) {
 
 async function handleGetObjectProperties(hsToken, { objectType }) {
   if (!objectType) return { error: 'objectType is required' };
-  const crmPathMap = { contact: 'contacts', deal: 'deals', company: 'companies', ticket: 'tickets', quote: 'quotes' };
-  const crmPath = crmPathMap[objectType] || objectType;
+  const crmPath = CRM_PROPERTY_TYPE_MAP[objectType] || objectType;
 
   const res = await hsGet(hsToken, `/crm/v3/properties/${crmPath}`);
   if (!res.ok) {
@@ -620,53 +572,6 @@ async function handleGetObjectProperties(hsToken, { objectType }) {
     .map(p => ({ value: p.name, label: p.label, fieldType: p.fieldType, type: p.type, options: (p.options || []).filter(o => !o.hidden).map(o => ({ label: o.label, value: o.value })) }))
     .sort((a, b) => a.label.localeCompare(b.label));
   return { properties: props.length > 0 ? props : getDefaultProperties(objectType) };
-}
-
-// Temporary probe: create a minimal PLATFORM_FLOW deal workflow with a given
-// enrollmentCriteria shape, read it back to get the canonical structure, then delete it.
-async function handleProbeEnrollment(hsToken, { enrollmentCriteria }) {
-  const probeFlow = {
-    name: '__extole_probe_delete_me',
-    flowType: 'WORKFLOW',
-    isEnabled: false,
-    objectTypeId: '0-3',
-    type: 'PLATFORM_FLOW',
-    startActionId: '1',
-    actions: [{
-      actionId: '1',
-      type: 'CUSTOM_CODE',
-      runtime: 'NODE20X',
-      inputFields: [],
-      sourceCode: "exports.main = async (event) => ({ outputFields: {} });",
-    }],
-    enrollmentCriteria,
-  };
-
-  const createRes = await fetch('https://api.hubapi.com/automation/v4/flows', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${hsToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(probeFlow),
-  });
-  const createBody = await createRes.json().catch(() => ({}));
-  if (!createRes.ok) {
-    return { error: createBody.message || `HTTP ${createRes.status}`, details: createBody };
-  }
-
-  const id = createBody.id;
-
-  // Read it back to get canonical shape
-  const getRes = await fetch(`https://api.hubapi.com/automation/v4/flows/${id}`, {
-    headers: { Authorization: `Bearer ${hsToken}` },
-  });
-  const canonical = await getRes.json().catch(() => ({}));
-
-  // Clean up
-  await fetch(`https://api.hubapi.com/automation/v4/flows/${id}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${hsToken}` },
-  });
-
-  return { canonical: canonical.enrollmentCriteria };
 }
 
 function parseWorkflowConfig(sourceCode) {
@@ -748,17 +653,20 @@ exports.main = async (event) => {
 
 async function handleGetForms(hsToken) {
   try {
-    const res = await fetch(
-      'https://api.hubapi.com/marketing/v3/forms?formTypes=hubspot&limit=100',
-      { headers: { Authorization: `Bearer ${hsToken}` } }
-    );
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      return { error: `HubSpot API ${res.status}: ${body.slice(0, 200)}`, forms: [] };
-    }
-    const data = await res.json();
-    const forms = (data.results || []).map(f => ({ id: f.id, name: f.name || f.id }));
-    return { forms };
+    const allForms = [];
+    let after = null;
+    do {
+      const url = 'https://api.hubapi.com/marketing/v3/forms?formTypes=hubspot&limit=100' + (after ? `&after=${after}` : '');
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${hsToken}` } });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        return { error: `HubSpot API ${res.status}: ${body.slice(0, 200)}`, forms: [] };
+      }
+      const data = await res.json();
+      allForms.push(...(data.results || []).map(f => ({ id: f.id, name: f.name || f.id })));
+      after = data.paging?.next?.after || null;
+    } while (after);
+    return { forms: allForms };
   } catch (e) {
     return { error: e.message, forms: [] };
   }
@@ -929,14 +837,17 @@ async function handleRunShareLinkBackfillBatch(hsToken, extoleToken, { cursor, p
 const AUTO_SHARE_LINK_WORKFLOW_NAME = 'Extole — Auto Share Link';
 
 async function handleGetAutoShareLinkStatus(hsToken) {
-  const res = await fetch('https://api.hubapi.com/automation/v4/flows?limit=100', {
-    headers: { Authorization: `Bearer ${hsToken}` },
-  });
-  if (!res.ok) return { workflow: null };
-  const data = await res.json();
-  const w = (data.results || []).find(w => w.name === AUTO_SHARE_LINK_WORKFLOW_NAME);
-  if (!w) return { workflow: null };
-  return { workflow: { id: String(w.id), enabled: w.isEnabled } };
+  let after = null;
+  do {
+    const url = 'https://api.hubapi.com/automation/v4/flows?limit=100' + (after ? `&after=${after}` : '');
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${hsToken}` } });
+    if (!res.ok) return { workflow: null };
+    const data = await res.json();
+    const w = (data.results || []).find(w => w.name === AUTO_SHARE_LINK_WORKFLOW_NAME);
+    if (w) return { workflow: { id: String(w.id), enabled: w.isEnabled } };
+    after = data.paging?.next?.after || null;
+  } while (after);
+  return { workflow: null };
 }
 
 async function handleToggleAutoShareLink(hsToken, extoleToken, { programLabel, enable, actor }) {
@@ -1198,7 +1109,7 @@ async function trimLog(hsToken, objectTypeId) {
     filterGroups: [],
     properties: ['eal_timestamp'],
     sorts: [{ propertyName: 'eal_timestamp', direction: 'DESCENDING' }],
-    limit: MAX_LOG_ENTRIES + 50, // fetch a bit beyond limit to catch overflow
+    limit: MAX_LOG_ENTRIES * 3, // fetch well beyond limit so trim catches any reasonable overflow
   });
   if (!res.ok) return;
   const data = await res.json();
@@ -1306,4 +1217,21 @@ function hsPost(token, path, body) {
     },
     body: JSON.stringify(body),
   });
+}
+
+// ─── Test exports (not used in production) ───────────────────────────────────
+if (process.env.NODE_ENV === 'test') {
+  module.exports._test = {
+    buildWorkflowSourceCode,
+    buildAutoShareLinkSourceCode,
+    parseWorkflowConfig,
+    handleGetWorkflows,
+    handleDeleteWorkflow,
+    handleClearLog,
+    handleRunShareLinkBackfillBatch,
+    handleCreateProperties,
+    handleValidateProperty,
+    handleGetForms,
+    handleGetAutoShareLinkStatus,
+  };
 }

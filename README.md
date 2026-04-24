@@ -1,6 +1,6 @@
 # Extole HubSpot App
 
-A HubSpot UI Extension that connects HubSpot to Extole's referral platform. It closes the referral loop by capturing friend attribution at form submission, firing lifecycle events to Extole when records change, and generating share links for contacts.
+A HubSpot UI Extension that connects HubSpot to Extole's offer platform. It closes the loop by capturing friend attribution at form submission, firing lifecycle events to Extole when records change, and generating share links for contacts.
 
 ---
 

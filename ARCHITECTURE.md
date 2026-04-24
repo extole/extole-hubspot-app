@@ -5,10 +5,10 @@
 The app has three independent features that share a common auth and settings layer:
 
 - **Event Configuration** — Admin defines record-triggered events in the UI. The app creates a Custom Workflow Action; HubSpot invokes it when a matching record change occurs. The dispatch function fires the event to Extole in real time.
-- **Form Instrumentation** — App generates a JavaScript snippet for the client's site. The snippet captures the advocate code from the referral URL and persists it across page navigation so it can be injected into HubSpot forms, closing the friend attribution loop.
+- **Form Instrumentation** — App generates a JavaScript snippet for the client's site. The snippet captures the advocate code from the share URL and persists it across page navigation so it can be injected into HubSpot forms, closing the friend attribution loop.
 - **Share Links** — App auto-generates Extole share links for Contacts and writes them back to a configurable Contact property. Supports auto-generate on create and bulk backfill for existing contacts.
 
-A CRM sidebar card on the Contact record surfaces the captured referral data at a glance.
+A CRM sidebar card on the Contact record surfaces the captured attribution data at a glance.
 
 ---
 

@@ -75,7 +75,7 @@ This creates the properties if they don't exist. The operation is idempotent —
 
 | Property | Purpose |
 |---|---|
-| `extole_advocate_code` | Advocate code captured at form submission; used for referral attribution |
+| `extole_advocate_code` | Advocate code captured at form submission; used for attribution |
 | `extole_share_link` | Share link URL written back from Extole; displayed in HubSpot for the contact |
 
 > If the client's Extole program uses `hubspotutk` for attribution (legacy), also create `extole_hubspotutk`. Most new implementations use the advocate code approach; skip this unless the program requires it.
@@ -126,7 +126,7 @@ The workflow is created and enabled immediately.
 
 *Skip this step if the client does not use HubSpot-embedded forms.*
 
-The Form Instrumentation snippet captures the advocate code from the referral URL and injects it into HubSpot form submissions so that friend Contacts are attributed to the correct advocate.
+The Form Instrumentation snippet captures the advocate code from the share URL and injects it into HubSpot form submissions so that friend Contacts are attributed to the correct advocate.
 
 ### 5a — Add hidden field to each HubSpot form
 
@@ -157,7 +157,7 @@ In the **Form Instrumentation** tab:
 1. When a friend lands via a share link (URL has `?extole_shareable_code=<code>`), the snippet stores the code in a 30-day cookie and localStorage
 2. On that page, and on every subsequent page the friend navigates to, the snippet injects `extole_advocate_code=<code>` as a URL param via `window.history.replaceState` before any HubSpot form loads
 3. HubSpot reads URL params at form init time and pre-populates the hidden `extole_advocate_code` field natively
-4. The friend can convert on any page — the referral code persists across the entire visit
+4. The friend can convert on any page — the code persists across the entire visit
 
 ---
 
@@ -211,7 +211,7 @@ Or check a specific person:
 extole person get --email test@example.com
 ```
 
-### Verify referral attribution
+### Verify attribution
 
 Full attribution requires a friend to arrive via a share link and submit a form. In a staging or test environment:
 
@@ -241,7 +241,7 @@ For deeper debugging, check the **Settings Log** tab for recent configuration ac
 
 ## Known Limitations
 
-- **Cross-device attribution** — the advocate code cookie is browser-scoped. A friend who clicks on mobile and converts on a different device loses the referral association. Document this gap with the client.
+- **Cross-device attribution** — the advocate code cookie is browser-scoped. A friend who clicks on mobile and converts on a different device loses the attribution. Document this gap with the client.
 - **HubSpot-native forms only** — Form Instrumentation works with HubSpot's JS-embedded forms (v2 classic and v3 new form builder). Typeform, Marketo, and custom HTML forms are not supported.
 - **Operations Hub Professional required** — Starter tier clients cannot use this app. Must be confirmed before implementation.
 - **Share link label** — A default campaign label (`exhsappd`) is applied to all share links until the Extole shareables API makes the label optional. If the client's program does not have this label, share link creation will fail. Contact Extole support to ensure the label exists on the client's program.

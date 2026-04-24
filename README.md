@@ -68,7 +68,7 @@ hs project dev
 hs project upload
 ```
 
-The `PRIVATE_APP_ACCESS_TOKEN` used for HubSpot CRM API calls is injected automatically by HubSpot in the deployed environment. It is not available during local dev — auth errors from serverless functions are expected when running `hs project dev`.
+The `PRIVATE_APP_ACCESS_TOKEN` used for HubSpot CRM API calls is injected automatically by HubSpot into serverless functions (`settings.js`) in the deployed environment. For generated workflow custom code, both the Extole token and the HubSpot token are embedded as constants at workflow creation time — they are not injected at runtime. The token is not available during local dev — auth errors from serverless functions are expected when running `hs project dev`.
 
 ---
 

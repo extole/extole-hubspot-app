@@ -23,9 +23,11 @@ Settings.tsx (settings page)  →   settings.js                   →   Extole A
   Share Links                        Share link generation
   Settings Log                       Log CRUD
 
-NewCard.tsx (contact sidebar)       dispatch.js                   →   Extole API
-  Shows advocate code + utk     ←   Workflow action callback           /v5/events
-  (reads Contact properties)        Fires event on record change
+NewCard.tsx (contact sidebar)       Workflow CUSTOM_CODE          →   Extole API
+  Shows advocate code + utk         (inline JS embedded in each       /v5/events
+  (reads Contact properties)         workflow at creation time)
+                                     Calls HubSpot CRM API for
+                                     properties, then fires event
 ```
 
 ---
@@ -71,12 +73,16 @@ Used for: connection test, event dispatch, share link generation, campaign list.
 ```
 Admin pastes token in Settings → app stores it as HubSpot app secret: EXTOLE_API_TOKEN
   → settings.js reads it as: context.secrets.EXTOLE_API_TOKEN
-  → dispatch.js reads it as: context.secrets.EXTOLE_API_TOKEN
+    → used directly for: testConnection, share link generation, campaign list
+    → at workflow creation time: embedded as a literal constant in generated workflow source code
+        → generated workflow JS calls Extole directly (no runtime secret lookup)
   → appended as: Authorization: Bearer <token>
   → Extole API (api.extole.io)
 ```
 
 **Setup:** Admin generates a long-lived token in the Extole Security Center, pastes it into the API Token field in the app's Settings tab, and clicks Test Connection.
+
+**Token embedding:** HubSpot portal-level automation secrets (used by workflow custom code) are a separate store from project function secrets. Because `EXTOLE_API_TOKEN` is a project function secret (not an automation secret), it is not available at workflow custom code runtime via `process.env`. Instead, `settings.js` reads the token when creating or updating a workflow and writes it as a literal constant into the generated `CUSTOM_CODE` source. The same applies to `PRIVATE_APP_ACCESS_TOKEN` (Token 1) in the generated workflow code — it is also embedded at creation time rather than injected at runtime.
 
 ---
 
@@ -86,20 +92,23 @@ Admin pastes token in Settings → app stores it as HubSpot app secret: EXTOLE_A
 sequenceDiagram
     participant Record as HubSpot Record
     participant WF as HubSpot Workflow\n(created by app)
-    participant Dispatch as dispatch.js\n(serverless function)
+    participant WFCode as Inline CUSTOM_CODE\n(embedded in workflow)
+    participant HSCRM as HubSpot CRM API\n(api.hubapi.com)
     participant Extole as Extole API\n/v5/events
 
     Record->>WF: record created / field changed
-    WF->>Dispatch: POST actionUrl\n{ object, inputFields: { eventName, ... } }
-    Dispatch->>Dispatch: build data payload\n(objectId, email, advocate_code, hubspotutk, ...)
-    Dispatch->>Extole: POST /v5/events\n{ event_name, data: { ...fields, app_type: hubspot_crm } }
-    Extole-->>Dispatch: HTTP response
-    Dispatch-->>WF: { status: SUCCESS / ERROR }
+    WF->>WFCode: workflow executes inline custom code\n(EXTOLE_TOKEN + HS_TOKEN embedded as constants)
+    WFCode->>HSCRM: GET /crm/v3/objects/{type}/{id}\n(fetch email + mapped properties)
+    HSCRM-->>WFCode: contact properties
+    WFCode->>Extole: POST /v5/events\n{ event_name, data: { ...fields, app_type: hubspot_crm } }
+    Extole-->>WFCode: HTTP response
 ```
 
-**Workflow structure:** Each event rule creates one HubSpot workflow with the "Send to Extole" custom action. The admin sets the trigger condition (record created, field changed, field changed to value) in HubSpot's workflow builder. The dispatch function owns the action step.
+**Workflow structure:** Each event rule creates one HubSpot workflow with a `CUSTOM_CODE` action step. The generated JavaScript is self-contained — both the Extole token and the HubSpot token are embedded as literal constants at workflow creation time by `settings.js`. No callback to an app serverless function occurs at dispatch time.
 
-**Identity payload:** dispatch.js always includes `email` and `{objectType}_id` (e.g. `contact_id`). If `extole_hubspotutk` and `extole_advocate_code` are present on the Contact, they are forwarded too, enabling Extole to link this event to the referral chain.
+**Identity payload:** The generated code always fetches and includes `email` plus any configured field mappings (e.g. `contact_id`, `first_name`, `last_name`). `app_type: hubspot_crm` is always appended.
+
+**Token rotation:** Because tokens are embedded at creation time, updating the Extole API token in Settings does not automatically update existing workflow custom code. Use **Update Workflow** (or delete and recreate) to push a new token into existing workflows.
 
 ---
 
@@ -222,7 +231,7 @@ One workflow per Event Configuration rule, plus one workflow for Auto Share Link
 
 ### dispatch.js
 
-Single-purpose: receives HubSpot workflow action callback, builds event payload, fires to Extole `/v5/events`. Returns `{ status: SUCCESS/ERROR }` per HubSpot workflow action contract.
+Legacy. Originally served as the HubSpot workflow action callback endpoint. Event Configuration workflows now use inline `CUSTOM_CODE` with embedded tokens instead of a callback to this function. dispatch.js is still deployed but is not invoked by any current workflow.
 
 ---
 

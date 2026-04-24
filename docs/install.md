@@ -24,6 +24,23 @@ Before starting, confirm the following with the client:
 
 ---
 
+## Step 0 — Local CLI Setup (developers only)
+
+*Skip this step if you are not deploying or developing the app locally.*
+
+The HubSpot CLI requires a `hubspot.config.yml` in the project root with your personal access key and portal ID. This file is gitignored — copy the example and fill in your values:
+
+```bash
+cp hubspot.config.example.yml hubspot.config.yml
+```
+
+Then edit `hubspot.config.yml`:
+- `name` / `defaultPortal` — your chosen account alias (e.g. `my-portal`)
+- `personalAccessKey` — generate one in HubSpot under **Settings → Integrations → Private Apps**
+- `portalId` — your HubSpot portal ID (visible in the URL when logged in)
+
+---
+
 ## Step 1 — Install the App
 
 Send the client the private install link. The client (or you, if you have admin access to their portal) must be a **portal admin** to complete installation.
@@ -212,7 +229,7 @@ Full attribution requires a friend to arrive via a share link and submit a form.
 | Symptom | Likely cause |
 |---|---|
 | Test Connection fails | Token wrong or expired — re-paste in Settings |
-| Workflow fires but no event in Extole | Check the EXTOLE_API_TOKEN secret is set in the app — Settings → Save may be needed after first install |
+| Workflow fires but no event in Extole | The Extole token is embedded in the workflow at creation time. If the token was updated in Settings after the workflow was created, use **Update Workflow** (or delete and recreate) to push the new token into the workflow's custom code |
 | `extole_advocate_code` empty on Contact | Hidden field not added to form in form builder (Step 5a); or snippet not loading before form script |
 | Form snippet has no effect | Snippet must load before `//js.hsforms.net/...` — check script order in `<head>` |
 | Share link backfill shows errors | Extole API token lacks shareables scope; or contacts have no email address |

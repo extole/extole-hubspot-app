@@ -1,0 +1,7 @@
+defaultPortal: my-account-alias
+portals:
+  - name: my-account-alias
+    env: prod
+    authType: personalaccesskey
+    personalAccessKey: YOUR_PERSONAL_ACCESS_KEY
+    portalId: YOUR_PORTAL_ID

@@ -1,5 +1,38 @@
 # AGENTS.md
 
+## Project: Extole HubSpot App
+
+HubSpot app (2026.03 platform) connecting HubSpot to Extole's referral platform. See `docs/spec.md` for the full feature spec.
+
+### Deploying
+
+```bash
+# Upload to HubSpot
+hs project upload --account extolehsappdev
+
+# Dev mode (hot reload — triggers install flow on first run)
+hs project dev --testing-account extolehsappdev --project-account extolehsappdev
+```
+
+Always run deploys directly — never hand off to the user.
+
+Target account alias: `extolehsappdev` (portal 245866198)
+
+### Secrets
+
+| Secret | Purpose |
+|---|---|
+| `PRIVATE_APP_TOKEN` | HubSpot private app personal access key — used by serverless functions to call HubSpot APIs |
+| `EXTOLE_API_TOKEN` | Extole bearer token — used by serverless functions to call Extole APIs |
+
+Add secrets via: `hs secret add <name> --account extolehsappdev`
+
+### Commit messages
+
+Do not add Co-Authored-By lines.
+
+---
+
 IMPORTANT: IF THE 'HubSpotDev' MCP SERVER IS INSTALLED USE THE TOOLS BEFORE TRYING TO MANUALLY USE CLI COMMANDS OR BEFORE TRYING TO DO ANYTHING WITH HUBSPOT ASSETS
 
 ## HubSpot Project Information

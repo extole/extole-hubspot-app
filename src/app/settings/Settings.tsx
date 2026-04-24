@@ -59,6 +59,14 @@ type PropertyStatus = { exists: boolean | null; createdAt?: string };
 
 type LogEntry = { id: string; timestamp: string; action: string; actor: string; details: string; status: 'success' | 'error' };
 
+type SavedFormSettings = {
+  advocateCodeProperty: string;
+  referralUrlParam: string;
+  includeAdvocateCode: boolean;
+  formTargeting: 'all' | 'specific';
+  selectedFormIds: string[];
+};
+
 // ─── Default field mappings ───────────────────────────────────────────────────
 
 const CONTACT_DEFAULTS: FieldMapping[] = [
@@ -244,6 +252,19 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
   const [advocateCodeCreating, setAdvocateCodeCreating] = useState(false);
   const [advocateCodeCreateResult, setAdvocateCodeCreateResult] = useState<string | null>(null);
 
+  // ── App Settings persistence ──
+  const [savedConfig, setSavedConfig] = useState<SavedFormSettings | null>(null);
+  const [appSettingsSaving, setAppSettingsSaving] = useState(false);
+  const [appSettingsSaveError, setAppSettingsSaveError] = useState<string | null>(null);
+  const [appSettingsLastSaved, setAppSettingsLastSaved] = useState<string | null>(null);
+  const appSettingsDirty = savedConfig !== null && (
+    advocateCodeProperty !== savedConfig.advocateCodeProperty ||
+    referralUrlParam !== savedConfig.referralUrlParam ||
+    includeAdvocateCode !== savedConfig.includeAdvocateCode ||
+    formTargeting !== savedConfig.formTargeting ||
+    JSON.stringify(selectedFormIds) !== JSON.stringify(savedConfig.selectedFormIds)
+  );
+
   // ── Derived snippet ──
   const snippet = generateSnippet({
     advocateCodeProperty: includeAdvocateCode ? advocateCodeProperty : '',
@@ -272,7 +293,36 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
       const r = res.response || {};
       if (r.error) setWorkflowsError(r.error);
       setWorkflows(r.workflows ?? []);
-    }).catch(() => {});
+      return runServerlessFunction({
+        name: 'extole_settings',
+        parameters: { action: 'getAppSettings' },
+        propertiesToSend: [],
+      });
+    }).then((res: any) => {
+      const s = res?.response?.settings;
+      const config: SavedFormSettings = {
+        advocateCodeProperty: s?.advocateCodeProperty ?? DEFAULT_ADVOCATE_CODE_PROPERTY,
+        referralUrlParam: s?.referralUrlParam ?? DEFAULT_REFERRAL_URL_PARAMS,
+        includeAdvocateCode: s?.includeAdvocateCode ?? true,
+        formTargeting: (s?.formTargeting ?? 'all') as 'all' | 'specific',
+        selectedFormIds: s?.selectedFormIds ?? [],
+      };
+      setAdvocateCodeProperty(config.advocateCodeProperty);
+      setReferralUrlParam(config.referralUrlParam);
+      setIncludeAdvocateCode(config.includeAdvocateCode);
+      setFormTargeting(config.formTargeting);
+      setSelectedFormIds(config.selectedFormIds);
+      setSavedConfig(config);
+      setAppSettingsLastSaved(res?.response?.updatedAt ?? null);
+    }).catch(() => {
+      setSavedConfig({
+        advocateCodeProperty: DEFAULT_ADVOCATE_CODE_PROPERTY,
+        referralUrlParam: DEFAULT_REFERRAL_URL_PARAMS,
+        includeAdvocateCode: true,
+        formTargeting: 'all',
+        selectedFormIds: [],
+      });
+    });
   }, []);
 
   // Load campaigns + check share link property when share links tab is first opened
@@ -511,8 +561,37 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
     }).then((res) => {
       if (res.response?.error) { setAutoShareError(res.response.error); return; }
       setAutoShareEnabled(res.response?.enabled ?? enable);
+      handleLoadWorkflows();
     }).catch((e) => setAutoShareError(String(e)))
       .finally(() => setAutoShareLoading(false));
+  }
+
+  function handleSaveFormSettings() {
+    setAppSettingsSaving(true);
+    setAppSettingsSaveError(null);
+    runServerlessFunction({
+      name: 'extole_settings',
+      parameters: {
+        action: 'saveAppSettings',
+        settings: {
+          advocateCodeProperty,
+          shareLinkProperty: DEFAULT_SHARE_LINK_PROPERTY,
+          referralUrlParam,
+          includeAdvocateCode,
+          formTargeting,
+          selectedFormIds,
+        },
+      },
+      propertiesToSend: [],
+    }).then((res: any) => {
+      if (res?.response?.error) { setAppSettingsSaveError(res.response.error); return; }
+      setSavedConfig({ advocateCodeProperty, referralUrlParam, includeAdvocateCode, formTargeting, selectedFormIds });
+      setAppSettingsLastSaved(res?.response?.updatedAt ?? new Date().toISOString());
+    }).catch((err: any) => {
+      setAppSettingsSaveError(String(err));
+    }).finally(() => {
+      setAppSettingsSaving(false);
+    });
   }
 
   async function handleRunShareLinkBackfill() {
@@ -578,6 +657,10 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
       propertiesToSend: [],
     }).then(() => {
       setConfirmDeleteId(null);
+      if (editingWorkflowId === flowId) {
+        setEditingWorkflowId(null);
+        setShowEventForm(false);
+      }
       handleLoadWorkflows();
     });
   }
@@ -755,43 +838,49 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
                         <TableCell>{w.status === 'DRAFT' ? 'Draft' : w.enabled ? 'Active' : 'Inactive'}</TableCell>
                         <TableCell>{formatDate(w.createdAt, locale)}</TableCell>
                         <TableCell>
-                          {confirmDeleteId === w.id ? (
-                            <Flex direction="row" gap="extra-small" align="center">
-                              <Button onClick={() => handleDeleteWorkflow(w.id, w.name)} variant="destructive">
-                                Confirm delete
-                              </Button>
-                              <Button onClick={() => setConfirmDeleteId(null)}>Cancel</Button>
-                            </Flex>
-                          ) : (
-                            <Dropdown variant="transparent">
-                              <Dropdown.ButtonItem onClick={() => handleEditWorkflow(w)}>
-                                Edit
+                          <Dropdown variant="transparent">
+                            <Dropdown.ButtonItem onClick={() => handleEditWorkflow(w)}>
+                              Edit
+                            </Dropdown.ButtonItem>
+                            <Dropdown.ButtonItem>
+                              <Link href={{ url: `https://app.hubspot.com/workflows/${portalId}/platform/flow/${w.id}/edit`, external: true }}>
+                                Open Workflow
+                              </Link>
+                            </Dropdown.ButtonItem>
+                            {w.enabled ? (
+                              <Dropdown.ButtonItem onClick={() => handleToggleWorkflow(w.id, false)}>
+                                Deactivate
                               </Dropdown.ButtonItem>
-                              <Dropdown.ButtonItem>
-                                <Link href={{ url: `https://app.hubspot.com/workflows/${portalId}/platform/flow/${w.id}/edit`, external: true }}>
-                                  Open Workflow
-                                </Link>
+                            ) : (
+                              <Dropdown.ButtonItem onClick={() => handleToggleWorkflow(w.id, true)}>
+                                Activate
                               </Dropdown.ButtonItem>
-                              {w.enabled ? (
-                                <Dropdown.ButtonItem onClick={() => handleToggleWorkflow(w.id, false)}>
-                                  Deactivate
-                                </Dropdown.ButtonItem>
-                              ) : (
-                                <Dropdown.ButtonItem onClick={() => handleToggleWorkflow(w.id, true)}>
-                                  Activate
-                                </Dropdown.ButtonItem>
-                              )}
-                              <Dropdown.ButtonItem onClick={() => setConfirmDeleteId(w.id)}>
-                                Delete
-                              </Dropdown.ButtonItem>
-                            </Dropdown>
-                          )}
+                            )}
+                            <Dropdown.ButtonItem onClick={() => setConfirmDeleteId(w.id)}>
+                              Delete
+                            </Dropdown.ButtonItem>
+                          </Dropdown>
                         </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
               )}
+
+              {confirmDeleteId && (() => {
+                const w = sortedWorkflows.find(wf => wf.id === confirmDeleteId);
+                return (
+                  <Flex direction="row" gap="small" align="center">
+                    <Text>Delete "{w?.name ?? confirmDeleteId}"?</Text>
+                    <Button onClick={() => handleDeleteWorkflow(confirmDeleteId, w?.name)} variant="destructive">
+                      Delete
+                    </Button>
+                    <Button onClick={() => setConfirmDeleteId(null)} variant="secondary">
+                      Cancel
+                    </Button>
+                  </Flex>
+                );
+              })()}
 
               {!showEventForm ? (
                 <>
@@ -853,12 +942,15 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
             form-based attribution.
           </Text>
 
-          <Toggle
-            name="includeAdvocateCode"
-            label="Capture advocate code"
-            checked={includeAdvocateCode}
-            onChange={(val) => setIncludeAdvocateCode(val)}
-          />
+          <Flex direction="row" gap="small" align="center">
+            <Toggle
+              name="includeAdvocateCode"
+              label="Capture advocate code"
+              checked={includeAdvocateCode}
+              onChange={(val) => setIncludeAdvocateCode(val)}
+            />
+            {appSettingsDirty && <StatusTag variant="warning">Unsaved changes</StatusTag>}
+          </Flex>
           <Text>Reads the referral code from the URL param and stores it on the Contact for HubSpot reporting.</Text>
 
           {includeAdvocateCode && (
@@ -958,6 +1050,21 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
               )}
             </>
           )}
+
+          <Spacer />
+          <Flex direction="row" gap="small" justify="end" align="center">
+            {appSettingsDirty && <StatusTag variant="danger">Unsaved changes</StatusTag>}
+            {!appSettingsDirty && appSettingsLastSaved && (
+              <Text format={{ color: 'medium' }}>Last saved: {formatDate(appSettingsLastSaved, locale)}</Text>
+            )}
+            <Button
+              onClick={handleSaveFormSettings}
+              disabled={appSettingsSaving || !appSettingsDirty}
+            >
+              {appSettingsSaving ? 'Saving...' : 'Save Settings'}
+            </Button>
+          </Flex>
+          {appSettingsSaveError && <Text format={{ color: 'destructive' }}>{appSettingsSaveError}</Text>}
 
           <Divider />
           <Text format={{ fontWeight: 'bold' }}>Generated Snippet</Text>
@@ -1469,7 +1576,7 @@ function generateSnippet({ advocateCodeProperty, referralUrlParams, formIds }: {
   }
 
   function getCookie() {
-    var match = document.cookie.match(new RegExp('(^|;\\s*)' + STORAGE_KEY + '=([^;]*)'));
+    var match = document.cookie.match(new RegExp('(^|;\\\\s*)' + STORAGE_KEY + '=([^;]*)'));
     return match ? decodeURIComponent(match[2]) : '';
   }
 

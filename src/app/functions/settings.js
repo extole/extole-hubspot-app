@@ -13,7 +13,13 @@ const BATCH_SIZE = 50;
 // Set to null once the API is fixed (ticket open). See: exhsappd = extole hubspot app default.
 const DEFAULT_SHARE_LABEL = 'exhsappd';
 
-const { testConnection } = require('./extole');
+async function testConnection(token) {
+  const response = await fetch(`${EXTOLE_API_BASE}/v4/tokens`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return { ok: response.ok, status: response.status };
+}
 
 exports.main = async (context) => {
   const hsToken = process.env.PRIVATE_APP_ACCESS_TOKEN;
@@ -56,6 +62,12 @@ exports.main = async (context) => {
 
     case 'getObjectProperties':
       return handleGetObjectProperties(hsToken, params);
+    case 'getContactCard':
+      return handleGetContactCard(hsToken, params);
+    case 'getAppSettings':
+      return handleGetAppSettings(hsToken);
+    case 'saveAppSettings':
+      return handleSaveAppSettings(hsToken, params);
 
     case 'getCampaigns':
       return handleGetCampaigns(extoleToken);
@@ -233,7 +245,7 @@ async function handleGetObjectTypes(hsToken) {
 
   const data = await res.json();
   const custom = (data.results || [])
-    .filter(s => s.name !== LOG_OBJECT_NAME)
+    .filter(s => s.name !== LOG_OBJECT_NAME && s.name !== APP_SETTINGS_OBJECT_NAME)
     .map(s => ({
       value: s.objectTypeId,
       label: s.labels?.singular || s.name,
@@ -347,7 +359,7 @@ async function handleCreateWorkflow(hsToken, extoleToken, { eventName, triggerOb
 
   const obj = triggerObject || 'contact';
   const objConfig = getObjConfig(obj);
-  const sourceCode = buildWorkflowSourceCode(eventName, objConfig.crmPath, fieldMappings);
+  const sourceCode = buildWorkflowSourceCode(eventName, objConfig.crmPath, fieldMappings, extoleToken, hsToken);
 
   const flow = {
     name: `Extole — ${eventName}`,
@@ -361,7 +373,6 @@ async function handleCreateWorkflow(hsToken, extoleToken, { eventName, triggerOb
       type: 'CUSTOM_CODE',
       runtime: 'NODE20X',
       inputFields: [],
-      secrets: ['EXTOLE_API_TOKEN'],
       sourceCode,
     }],
     enrollmentCriteria: buildEnrollmentCriteria(obj, triggerType, triggerProperty, triggerToValue),
@@ -468,7 +479,7 @@ async function handleUpdateWorkflow(hsToken, extoleToken, { flowId, eventName, t
 
   const obj = triggerObject || 'contact';
   const objConfig = getObjConfig(obj);
-  const sourceCode = buildWorkflowSourceCode(eventName, objConfig.crmPath, fieldMappings);
+  const sourceCode = buildWorkflowSourceCode(eventName, objConfig.crmPath, fieldMappings, extoleToken, hsToken);
 
   // GET current flow to preserve mutable fields not included in the edit form
   const getRes = await fetch(`https://api.hubapi.com/automation/v4/flows/${flowId}`, {
@@ -485,7 +496,7 @@ async function handleUpdateWorkflow(hsToken, extoleToken, { flowId, eventName, t
     : existing.enrollmentCriteria;
 
   const updatedActions = (existing.actions || []).map((a, i) =>
-    i === 0 ? { ...a, sourceCode, secrets: ['EXTOLE_API_TOKEN'] } : a
+    i === 0 ? { ...a, sourceCode } : a
   );
 
   const putBody = {
@@ -556,6 +567,23 @@ function getDefaultProperties(objectType) {
   return DEFAULT_PROPERTIES[objectType] || [];
 }
 
+async function handleGetContactCard(hsToken, { objectId }) {
+  if (!objectId) return { advocateCode: null, shareLink: null, error: 'missing objectId' };
+  if (!hsToken) return { advocateCode: null, shareLink: null, error: 'missing hsToken' };
+  const settingsResult = await handleGetAppSettings(hsToken);
+  const { advocateCodeProperty = 'extole_advocate_code', shareLinkProperty = 'extole_share_link' } = settingsResult.settings || {};
+  const res = await hsGet(hsToken, `/crm/v3/objects/contacts/${objectId}?properties=${encodeURIComponent(advocateCodeProperty)},${encodeURIComponent(shareLinkProperty)}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    return { advocateCode: null, shareLink: null, error: `HS API ${res.status}: ${body.slice(0, 120)}` };
+  }
+  const data = await res.json();
+  return {
+    advocateCode: data.properties?.[advocateCodeProperty] || null,
+    shareLink: data.properties?.[shareLinkProperty] || null,
+  };
+}
+
 async function handleGetObjectProperties(hsToken, { objectType }) {
   if (!objectType) return { error: 'objectType is required' };
   const crmPath = CRM_PROPERTY_TYPE_MAP[objectType] || objectType;
@@ -591,37 +619,36 @@ function parseWorkflowConfig(sourceCode) {
   }
 }
 
-function buildWorkflowSourceCode(eventName, crmObjectType, fieldMappings) {
-  // Tokens are NOT embedded — they are read from environment at runtime.
-  // HUBSPOT_PRIVATE_APP_ACCESS_TOKEN is auto-injected by HubSpot into custom code actions.
-  // EXTOLE_API_TOKEN must be declared in the action's secrets array (see handleCreateWorkflow).
+function buildWorkflowSourceCode(eventName, crmObjectType, fieldMappings, extoleToken, hsToken) {
   const escape = (s) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '');
 
   return `
 const EVENT_NAME = '${escape(eventName)}';
 const CRM_TYPE = '${crmObjectType}';
 const FIELD_MAPPINGS = ${JSON.stringify(fieldMappings || [])};
+const EXTOLE_TOKEN = '${escape(extoleToken || '')}';
+const HS_TOKEN = '${escape(hsToken || '')}';
 
 exports.main = async (event) => {
-  const HS_TOKEN = process.env.HUBSPOT_PRIVATE_APP_ACCESS_TOKEN;
-  const EXTOLE_TOKEN = process.env.EXTOLE_API_TOKEN;
   const objectId = event.object.objectId;
 
-  // Fetch object properties from HubSpot CRM
-  const propNames = [...new Set(
+  // Always fetch email + any field-mapping properties
+  const mappedProps = [...new Set(
     FIELD_MAPPINGS.filter(m => m.source === 'property' && m.value).map(m => m.value)
   )];
-  const propsQuery = propNames.map(p => 'properties=' + encodeURIComponent(p)).join('&');
+  const allProps = [...new Set(['email', ...mappedProps])];
+  const propsQuery = allProps.map(p => 'properties=' + encodeURIComponent(p)).join('&');
 
   const hsRes = await fetch(
-    'https://api.hubapi.com/crm/v3/objects/' + CRM_TYPE + '/' + objectId + (propsQuery ? '?' + propsQuery : ''),
+    'https://api.hubapi.com/crm/v3/objects/' + CRM_TYPE + '/' + objectId + '?' + propsQuery,
     { headers: { Authorization: 'Bearer ' + HS_TOKEN } }
   );
   const hsBody = await hsRes.json().catch(() => ({}));
   const props = hsBody.properties || {};
 
-  // Build Extole event data from field mappings
+  // Build Extole event data — email is always included as identity
   const data = { app_type: 'hubspot_crm' };
+  if (props.email) data.email = props.email;
   for (const m of FIELD_MAPPINGS) {
     if (!m.extoleKey) continue;
     const value = m.source === 'static' ? m.value : props[m.value];
@@ -860,7 +887,7 @@ async function handleToggleAutoShareLink(hsToken, extoleToken, { programLabel, e
     await writeLogEntry(hsToken, {
       action: 'auto_share_link_disabled',
       actor: actor || '',
-      details: '',
+      details: AUTO_SHARE_LINK_WORKFLOW_NAME,
       status: 'success',
     });
     return { enabled: false };
@@ -873,7 +900,7 @@ async function handleToggleAutoShareLink(hsToken, extoleToken, { programLabel, e
     await writeLogEntry(hsToken, {
       action: 'auto_share_link_enabled',
       actor: actor || '',
-      details: '',
+      details: AUTO_SHARE_LINK_WORKFLOW_NAME,
       status: 'success',
     });
     return { enabled: true };
@@ -893,8 +920,7 @@ async function handleToggleAutoShareLink(hsToken, extoleToken, { programLabel, e
       type: 'CUSTOM_CODE',
       runtime: 'NODE20X',
       inputFields: [],
-      secrets: ['EXTOLE_API_TOKEN'],
-      sourceCode: buildAutoShareLinkSourceCode(programLabel || ''),
+      sourceCode: buildAutoShareLinkSourceCode(programLabel || '', extoleToken, hsToken),
     }],
     enrollmentCriteria: buildEnrollmentCriteria('contact', 'RECORD_CREATED', null, null),
   };
@@ -915,8 +941,7 @@ async function handleToggleAutoShareLink(hsToken, extoleToken, { programLabel, e
   return { enabled: true, workflowId: String(createBody.id) };
 }
 
-function buildAutoShareLinkSourceCode(programLabel) {
-  // Tokens are NOT embedded — read from environment at runtime.
+function buildAutoShareLinkSourceCode(programLabel, extoleToken, hsToken) {
   const escape = (s) => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '');
   const resolvedLabel = programLabel || DEFAULT_SHARE_LABEL;
   const labelExpr = resolvedLabel ? `'${escape(resolvedLabel)}'` : 'null';
@@ -926,10 +951,10 @@ const PROGRAM_LABEL = ${labelExpr};
 const SHARE_LINK_PROPERTY = 'extole_share_link';
 const EXTOLE_API = 'https://api.extole.io';
 const HS_API = 'https://api.hubapi.com';
+const EXTOLE_TOKEN = '${escape(extoleToken || '')}';
+const HS_TOKEN = '${escape(hsToken || '')}';
 
 exports.main = async (event) => {
-  const HS_TOKEN = process.env.HUBSPOT_PRIVATE_APP_ACCESS_TOKEN;
-  const EXTOLE_TOKEN = process.env.EXTOLE_API_TOKEN;
   const contactId = event.object.objectId;
 
   const hsRes = await fetch(HS_API + '/crm/v3/objects/contacts/' + contactId + '?properties=email', {
@@ -992,6 +1017,112 @@ exports.main = async (event) => {
   return { outputFields: { status: 'SUCCESS', shareLink: link } };
 };
 `.trim();
+}
+
+// ─── App Settings ────────────────────────────────────────────────────────────
+
+const APP_SETTINGS_OBJECT_NAME = 'extole_app_settings';
+
+function getDefaultAppSettings() {
+  return {
+    advocateCodeProperty: 'extole_advocate_code',
+    shareLinkProperty: 'extole_share_link',
+    referralUrlParam: 'extole_shareable_code',
+    includeAdvocateCode: true,
+    formTargeting: 'all',
+    selectedFormIds: [],
+  };
+}
+
+async function getAppSettingsObjectTypeId(hsToken) {
+  const res = await hsGet(hsToken, '/crm/v3/schemas');
+  if (!res.ok) return null;
+  const data = await res.json();
+  const schema = (data.results || []).find(s => s.name === APP_SETTINGS_OBJECT_NAME);
+  return schema ? schema.objectTypeId : null;
+}
+
+async function ensureAppSettingsSchema(hsToken) {
+  const existing = await getAppSettingsObjectTypeId(hsToken);
+  if (existing) return existing;
+  const createRes = await hsPost(hsToken, '/crm/v3/schemas', {
+    name: APP_SETTINGS_OBJECT_NAME,
+    labels: { singular: 'Extole App Settings', plural: 'Extole App Settings' },
+    primaryDisplayProperty: 'eas_name',
+    properties: [
+      { name: 'eas_name',       label: 'Name',       type: 'string',   fieldType: 'text',     groupName: 'extole_app_settings_information' },
+      { name: 'eas_config',     label: 'Config',     type: 'string',   fieldType: 'textarea', groupName: 'extole_app_settings_information' },
+      { name: 'eas_updated_at', label: 'Updated At', type: 'datetime', fieldType: 'date',     groupName: 'extole_app_settings_information' },
+    ],
+    associatedObjects: [],
+  });
+  if (!createRes.ok) return null;
+  const data = await createRes.json();
+  return data.objectTypeId || null;
+}
+
+async function handleGetAppSettings(hsToken) {
+  if (!hsToken) return { settings: getDefaultAppSettings(), updatedAt: null };
+  const objectTypeId = await getAppSettingsObjectTypeId(hsToken);
+  if (!objectTypeId) return { settings: getDefaultAppSettings(), updatedAt: null };
+  const res = await hsPost(hsToken, `/crm/v3/objects/${objectTypeId}/search`, {
+    filterGroups: [{ filters: [{ propertyName: 'eas_name', operator: 'EQ', value: 'default' }] }],
+    properties: ['eas_config', 'eas_updated_at'],
+    limit: 1,
+  });
+  if (!res.ok) return { settings: getDefaultAppSettings(), updatedAt: null };
+  const data = await res.json();
+  const record = data.results?.[0];
+  if (!record) return { settings: getDefaultAppSettings(), updatedAt: null };
+  try {
+    const stored = JSON.parse(record.properties.eas_config || '{}');
+    return {
+      settings: { ...getDefaultAppSettings(), ...stored },
+      updatedAt: record.properties.eas_updated_at || null,
+    };
+  } catch {
+    return { settings: getDefaultAppSettings(), updatedAt: null };
+  }
+}
+
+async function handleSaveAppSettings(hsToken, { settings }) {
+  if (!hsToken) return { error: 'missing hsToken' };
+  const objectTypeId = await ensureAppSettingsSchema(hsToken);
+  if (!objectTypeId) return { error: 'Could not initialize settings schema' };
+  const now = new Date().toISOString();
+  const props = {
+    eas_name: 'default',
+    eas_config: JSON.stringify(settings || {}),
+    eas_updated_at: now,
+  };
+  // Upsert: find existing record, patch if found, create if not
+  const searchRes = await hsPost(hsToken, `/crm/v3/objects/${objectTypeId}/search`, {
+    filterGroups: [{ filters: [{ propertyName: 'eas_name', operator: 'EQ', value: 'default' }] }],
+    properties: ['eas_name'],
+    limit: 1,
+  });
+  if (searchRes.ok) {
+    const searchData = await searchRes.json();
+    const existing = searchData.results?.[0];
+    if (existing) {
+      const patchRes = await fetch(`${HS_API_BASE}/crm/v3/objects/${objectTypeId}/${existing.id}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${hsToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ properties: props }),
+      });
+      if (!patchRes.ok) {
+        const errBody = await patchRes.json().catch(() => ({}));
+        return { error: errBody.message || `HTTP ${patchRes.status}` };
+      }
+      return { saved: true, updatedAt: now };
+    }
+  }
+  const createRes = await hsPost(hsToken, `/crm/v3/objects/${objectTypeId}`, { properties: props });
+  if (!createRes.ok) {
+    const errBody = await createRes.json().catch(() => ({}));
+    return { error: errBody.message || `HTTP ${createRes.status}` };
+  }
+  return { saved: true, updatedAt: now };
 }
 
 // ─── Activity Log ─────────────────────────────────────────────────────────────

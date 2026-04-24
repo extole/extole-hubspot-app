@@ -12,7 +12,25 @@
  * }
  */
 
-const { fireEvent } = require('./extole');
+const EXTOLE_API_BASE = 'https://api.extole.io';
+
+async function fireEvent(token, eventName, data) {
+  const payload = {
+    event_name: eventName,
+    data: { ...data, app_type: 'hubspot_crm' },
+  };
+  const response = await fetch(`${EXTOLE_API_BASE}/v5/events`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  let body;
+  try { body = await response.json(); } catch { body = null; }
+  return { ok: response.ok, status: response.status, body };
+}
 
 exports.main = async (context) => {
   const token = context.secrets.EXTOLE_API_TOKEN;

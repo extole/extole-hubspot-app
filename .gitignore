@@ -4,3 +4,4 @@ node_modules/
 hsprofile.*.json
 hubspot.config.yml
 .env
+app_testing.md

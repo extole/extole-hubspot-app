@@ -178,7 +178,7 @@ sequenceDiagram
 | Property | Type | Purpose |
 |---|---|---|
 | `extole_advocate_code` | Single-line text | Advocate code captured at form submission; written by Form Instrumentation snippet |
-| `extole_hubspotutk` | Single-line text | HubSpot visitor cookie captured at form submission; forwarded by dispatch to Extole for attribution lookup |
+| `extole_hubspotutk` | Single-line text | Stores HubSpot's native visitor cookie (`hubspotutk`) value at form submission — reads existing HubSpot tracking, adds no new tracking; forwarded to Extole for attribution lookup |
 | `extole_share_link` | Single-line text | Extole share link URL; written back by Share Links feature |
 
 ### HubSpot Custom Object — Settings Log

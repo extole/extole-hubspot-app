@@ -2,7 +2,7 @@
 
 ## Project: Extole HubSpot App
 
-HubSpot app (2026.03 platform) connecting HubSpot to Extole's offer platform. See `docs/spec.md` for the full feature spec.
+HubSpot app (2026.03 platform) connecting HubSpot to Extole's offer platform. See `install.md` for the installation guide and `ARCHITECTURE.md` for the technical overview.
 
 ### Deploying
 

@@ -43,15 +43,7 @@ Then edit `hubspot.config.yml`:
 
 ## Step 1 — Install the App
 
-Send the client this install link:
-
-```
-https://app-na2.hubspot.com/static-token/245866198/authorize?appId=36735430
-```
-
-The client (or you, if you have admin access to their portal) must be a **portal admin** to complete installation. After clicking the link they will be prompted to authorize the required scopes.
-
-The install link can also be found in the HubSpot developer portal: **Development → Projects → Extole → extole_hs_app → Reinstall URL**.
+Send the client the private install link. The client (or you, if you have admin access to their portal) must be a **portal admin** to complete installation.
 
 After install, the app appears in the HubSpot portal under **Settings → Integrations**.
 

@@ -8,6 +8,7 @@
 
 const HS_API_BASE = 'https://api.hubapi.com';
 const EXTOLE_API_BASE = 'https://api.extole.io';
+const EXTOLE_APP_TYPE_HEADER = { 'x-extole-app-type': 'extole-hubspot-app' };
 const BATCH_SIZE = 50;
 // Workaround: Extole v5 shareables API currently requires a label even though it shouldn't.
 // Set to null once the API is fixed (ticket open). See: exhsappd = extole hubspot app default.
@@ -16,7 +17,7 @@ const DEFAULT_SHARE_LABEL = 'exhsappd';
 async function testConnection(token) {
   const response = await fetch(`${EXTOLE_API_BASE}/v4/tokens`, {
     method: 'GET',
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { Authorization: `Bearer ${token}`, ...EXTOLE_APP_TYPE_HEADER },
   });
   return { ok: response.ok, status: response.status };
 }
@@ -647,7 +648,7 @@ exports.main = async (event) => {
   const props = hsBody.properties || {};
 
   // Build Extole event data — email is always included as identity
-  const data = { app_type: 'hubspot_crm' };
+  const data = { app_type: 'extole-hubspot-app' };
   if (props.email) data.email = props.email;
   for (const m of FIELD_MAPPINGS) {
     if (!m.extoleKey) continue;
@@ -658,7 +659,7 @@ exports.main = async (event) => {
   // Fire event to Extole
   const extoleRes = await fetch('https://api.extole.io/v5/events', {
     method: 'POST',
-    headers: { Authorization: 'Bearer ' + EXTOLE_TOKEN, 'Content-Type': 'application/json' },
+    headers: { Authorization: 'Bearer ' + EXTOLE_TOKEN, 'Content-Type': 'application/json', 'x-extole-app-type': 'extole-hubspot-app' },
     body: JSON.stringify({ event_name: EVENT_NAME, data })
   });
 
@@ -705,7 +706,7 @@ async function handleGetCampaigns(extoleToken) {
   try {
     if (!extoleToken) return { error: 'EXTOLE_API_TOKEN secret not configured', campaigns: [] };
     const res = await fetch(`${EXTOLE_API_BASE}/v2/campaign-summaries`, {
-      headers: { Authorization: `Bearer ${extoleToken}` },
+      headers: { Authorization: `Bearer ${extoleToken}`, ...EXTOLE_APP_TYPE_HEADER },
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
@@ -764,7 +765,7 @@ async function handleRunShareLinkBackfillBatch(hsToken, extoleToken, { cursor, p
     // Look up person in Extole by email
     const lookupRes = await fetch(
       `${EXTOLE_API_BASE}/v5/persons?identity_key_value=${encodeURIComponent(email)}`,
-      { headers: { Authorization: `Bearer ${extoleToken}` } }
+      { headers: { Authorization: `Bearer ${extoleToken}`, ...EXTOLE_APP_TYPE_HEADER } }
     );
     if (!lookupRes.ok) {
       errors.push({ email, error: `lookup ${lookupRes.status}` });
@@ -775,7 +776,7 @@ async function handleRunShareLinkBackfillBatch(hsToken, extoleToken, { cursor, p
       // Person doesn't exist in Extole — create directly
       const createRes = await fetch(`${EXTOLE_API_BASE}/v5/persons`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${extoleToken}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${extoleToken}`, 'Content-Type': 'application/json', ...EXTOLE_APP_TYPE_HEADER },
         body: JSON.stringify({ identity_key_value: email }),
       });
       const createBody = await createRes.json().catch(() => ({}));
@@ -792,7 +793,7 @@ async function handleRunShareLinkBackfillBatch(hsToken, extoleToken, { cursor, p
     // Create shareable for this campaign
     const shareCreateRes = await fetch(`${EXTOLE_API_BASE}/v5/persons/${personId}/shareables`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${extoleToken}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${extoleToken}`, 'Content-Type': 'application/json', ...EXTOLE_APP_TYPE_HEADER },
       body: JSON.stringify({ label: programLabel || DEFAULT_SHARE_LABEL }),
     });
     const shareCreateBody = await shareCreateRes.json().catch(() => ({}));
@@ -803,7 +804,7 @@ async function handleRunShareLinkBackfillBatch(hsToken, extoleToken, { cursor, p
     } else if (shareCreateBody.code === 'shareable_key_taken') {
       // Shareable already exists — fetch and use the existing link
       const getRes = await fetch(`${EXTOLE_API_BASE}/v5/persons/${personId}/shareables`, {
-        headers: { Authorization: `Bearer ${extoleToken}` },
+        headers: { Authorization: `Bearer ${extoleToken}`, ...EXTOLE_APP_TYPE_HEADER },
       });
       if (getRes.ok) {
         const shareables = await getRes.json().catch(() => []);
@@ -966,7 +967,7 @@ exports.main = async (event) => {
 
   // Look up person in Extole
   const lookupRes = await fetch(EXTOLE_API + '/v5/persons?identity_key_value=' + encodeURIComponent(email), {
-    headers: { Authorization: 'Bearer ' + EXTOLE_TOKEN }
+    headers: { Authorization: 'Bearer ' + EXTOLE_TOKEN, 'x-extole-app-type': 'extole-hubspot-app' }
   });
   const persons = await lookupRes.json().catch(() => []);
 
@@ -977,7 +978,7 @@ exports.main = async (event) => {
     // Person doesn't exist — create directly
     const createRes = await fetch(EXTOLE_API + '/v5/persons', {
       method: 'POST',
-      headers: { Authorization: 'Bearer ' + EXTOLE_TOKEN, 'Content-Type': 'application/json' },
+      headers: { Authorization: 'Bearer ' + EXTOLE_TOKEN, 'Content-Type': 'application/json', 'x-extole-app-type': 'extole-hubspot-app' },
       body: JSON.stringify({ identity_key_value: email })
     });
     if (!createRes.ok) return { outputFields: { status: 'ERROR', reason: 'person_create_failed' } };
@@ -989,7 +990,7 @@ exports.main = async (event) => {
   // Create shareable
   const shareRes = await fetch(EXTOLE_API + '/v5/persons/' + personId + '/shareables', {
     method: 'POST',
-    headers: { Authorization: 'Bearer ' + EXTOLE_TOKEN, 'Content-Type': 'application/json' },
+    headers: { Authorization: 'Bearer ' + EXTOLE_TOKEN, 'Content-Type': 'application/json', 'x-extole-app-type': 'extole-hubspot-app' },
     body: JSON.stringify({ label: PROGRAM_LABEL })
   });
   const shareBody = await shareRes.json().catch(() => ({}));
@@ -999,7 +1000,7 @@ exports.main = async (event) => {
     link = shareBody.link;
   } else if (shareBody.code === 'shareable_key_taken') {
     const getRes = await fetch(EXTOLE_API + '/v5/persons/' + personId + '/shareables', {
-      headers: { Authorization: 'Bearer ' + EXTOLE_TOKEN }
+      headers: { Authorization: 'Bearer ' + EXTOLE_TOKEN, 'x-extole-app-type': 'extole-hubspot-app' }
     });
     const shareables = await getRes.json().catch(() => []);
     const match = Array.isArray(shareables) ? shareables.find(function(s) { return s.label === PROGRAM_LABEL; }) : null;

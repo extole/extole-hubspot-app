@@ -17,13 +17,14 @@ const EXTOLE_API_BASE = 'https://api.extole.io';
 async function fireEvent(token, eventName, data) {
   const payload = {
     event_name: eventName,
-    data: { ...data, app_type: 'hubspot_crm' },
+    data: { ...data, app_type: 'extole-hubspot-app' },
   };
   const response = await fetch(`${EXTOLE_API_BASE}/v5/events`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
+      'x-extole-app-type': 'extole-hubspot-app',
     },
     body: JSON.stringify(payload),
   });

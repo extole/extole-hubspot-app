@@ -153,7 +153,7 @@ In the **Form Instrumentation** tab:
 4. Copy the generated snippet
 5. Add the snippet to the client's site — it must load **before** any HubSpot form script
 
-**Where to place it:** In the `<head>` of every page where a HubSpot form may appear, before the `//js.hsforms.net/...` script tag.
+**Where to place it:** Add it once, site-wide — typically via a tag manager (GTM, etc.) or the site's global `<head>` template, before the `//js.hsforms.net/...` script tag. It does not need to be added per page.
 
 **How it works:**
 1. When a friend lands via a share link (URL has `?extole_shareable_code=<code>`), the snippet stores the code in a 30-day cookie and localStorage

@@ -35,10 +35,11 @@ describe('buildWorkflowSourceCode', () => {
     expect(src).toContain('"extoleKey":"email"');
   });
 
-  it('uses process.env tokens — no hardcoded credentials', () => {
-    const src = t.buildWorkflowSourceCode('test_event', 'contacts', []);
-    expect(src).toContain('process.env.HUBSPOT_PRIVATE_APP_ACCESS_TOKEN');
-    expect(src).toContain('process.env.EXTOLE_API_TOKEN');
+  it('embeds tokens as constants, not process.env', () => {
+    const src = t.buildWorkflowSourceCode('test_event', 'contacts', [], 'extole-tok', 'hs-tok');
+    expect(src).toContain("const EXTOLE_TOKEN = 'extole-tok'");
+    expect(src).toContain("const HS_TOKEN = 'hs-tok'");
+    expect(src).not.toContain('process.env');
     expect(src).not.toMatch(/Bearer [a-zA-Z0-9_-]{10}/);
   });
 
@@ -93,10 +94,11 @@ describe('parseWorkflowConfig', () => {
 // ─── buildAutoShareLinkSourceCode ─────────────────────────────────────────────
 
 describe('buildAutoShareLinkSourceCode', () => {
-  it('uses process.env tokens — no hardcoded credentials', () => {
-    const src = t.buildAutoShareLinkSourceCode('my_label');
-    expect(src).toContain('process.env.HUBSPOT_PRIVATE_APP_ACCESS_TOKEN');
-    expect(src).toContain('process.env.EXTOLE_API_TOKEN');
+  it('embeds tokens as constants, not process.env', () => {
+    const src = t.buildAutoShareLinkSourceCode('my_label', 'extole-tok', 'hs-tok');
+    expect(src).toContain("const EXTOLE_TOKEN = 'extole-tok'");
+    expect(src).toContain("const HS_TOKEN = 'hs-tok'");
+    expect(src).not.toContain('process.env');
   });
 
   it('embeds program label', () => {

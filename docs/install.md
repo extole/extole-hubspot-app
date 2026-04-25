@@ -128,6 +128,8 @@ The workflow is created and enabled immediately.
 
 The Form Instrumentation snippet captures the advocate code from the share URL and injects it into HubSpot form submissions so that friend Contacts are attributed to the correct advocate.
 
+> **Prerequisites:** Step 3 (Create Properties) must be completed before Step 5a. The `extole_advocate_code` Contact property must exist before HubSpot will offer it as a field option in the form builder. If the hidden field is not added to the form, the snippet will still run without errors — but the advocate code will be silently dropped at form submission and never land on the Contact record.
+
 ### 5a — Add hidden field to each HubSpot form
 
 For every form you want to instrument, add `extole_advocate_code` as a hidden field in HubSpot's form builder.
@@ -230,7 +232,7 @@ Full attribution requires a friend to arrive via a share link and submit a form.
 |---|---|
 | Test Connection fails | Token wrong or expired — re-paste in Settings |
 | Workflow fires but no event in Extole | The Extole token is embedded in the workflow at creation time. If the token was updated in Settings after the workflow was created, use **Update Workflow** (or delete and recreate) to push the new token into the workflow's custom code |
-| `extole_advocate_code` empty on Contact | Hidden field not added to form in form builder (Step 5a); or snippet not loading before form script |
+| `extole_advocate_code` empty on Contact | Hidden field not added to form in form builder (Step 5a) — snippet runs silently but code is dropped at submission; or snippet not loading before form script; or `extole_advocate_code` property not yet created (Step 3) |
 | Form snippet has no effect | Snippet must load before `//js.hsforms.net/...` — check script order in `<head>` |
 | Share link backfill shows errors | Extole API token lacks shareables scope; or contacts have no email address |
 | CRM card not showing | Layout customization not saved per Step 7 |

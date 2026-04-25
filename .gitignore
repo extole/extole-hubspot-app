@@ -5,3 +5,4 @@ hsprofile.*.json
 hubspot.config.yml
 .env
 app_testing.md
+src/app/dist/

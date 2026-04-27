@@ -761,8 +761,8 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
     <Form>
       {/* ── Navigation ── */}
       <Flex direction="row" gap="extra-small">
-        <Button variant={activeTab === 'events' ? undefined : 'transparent'} onClick={() => setActiveTab('events')}>Event Configuration</Button>
-        <Button variant={activeTab === 'forms' ? undefined : 'transparent'} onClick={() => setActiveTab('forms')}>Form Instrumentation</Button>
+        <Button variant={activeTab === 'events' ? undefined : 'transparent'} onClick={() => setActiveTab('events')}>Configure Events</Button>
+        <Button variant={activeTab === 'forms' ? undefined : 'transparent'} onClick={() => setActiveTab('forms')}>Manage Advocate Codes</Button>
         <Button variant={activeTab === 'sharelinks' ? undefined : 'transparent'} onClick={() => setActiveTab('sharelinks')}>Share Links</Button>
         <Button variant={activeTab === 'log' ? undefined : 'transparent'} onClick={() => setActiveTab('log')}>Settings Log</Button>
       </Flex>
@@ -933,7 +933,7 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
       ══════════════════════════════════════════════════════════════════ */}
       {activeTab === 'forms' && (<>
 
-          <Heading>Form Instrumentation</Heading>
+          <Heading>Manage Advocate Codes</Heading>
           <Text>
             Captures the referral advocate code at form submission and stores it on the Contact
             for Extole attribution. Before deploying the snippet, add extole_advocate_code as a

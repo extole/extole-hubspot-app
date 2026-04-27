@@ -677,7 +677,7 @@ exports.main = async (event) => {
 `.trim();
 }
 
-// ─── Form Instrumentation handlers ───────────────────────────────────────────
+// ─── Manage Advocate Codes handlers ──────────────────────────────────────────
 
 async function handleGetForms(hsToken) {
   try {

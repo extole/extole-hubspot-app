@@ -20,7 +20,7 @@ Before starting, confirm the following with the client:
 | **HubSpot tier** | Operations Hub **Professional** or higher — required for serverless functions. Starter tier cannot run this app. |
 | **HubSpot role** | Portal admin access — required to install apps and create workflows |
 | **Extole API token** | Long-lived bearer token for the client's Extole account |
-| **HubSpot-embedded forms** | Required for Form Instrumentation; Event Configuration and Share Links work without it |
+| **HubSpot-embedded forms** | Required for Manage Advocate Codes; Configure Events and Share Links work without it |
 
 ---
 
@@ -64,9 +64,9 @@ If the connection test fails, verify the token has API access on the client's Ex
 
 ## Step 3 — Create Contact Properties
 
-The Form Instrumentation snippet and Share Links feature write data to custom Contact properties. These must exist before using either feature.
+The Manage Advocate Codes snippet and Share Links feature write data to custom Contact properties. These must exist before using either feature.
 
-In the **Event Configuration** tab, find the **Properties** section:
+In the **Configure Events** tab, find the **Properties** section:
 
 1. Confirm the property names (defaults: `extole_advocate_code`, `extole_share_link`)
 2. Click **Create Properties**
@@ -84,7 +84,7 @@ This creates the properties if they don't exist. The operation is idempotent —
 
 ## Step 4 — Configure Event Workflows
 
-In the **Event Configuration** tab, create one workflow per Extole event the client needs.
+In the **Configure Events** tab, create one workflow per Extole event the client needs.
 
 ### Minimum recommended events
 
@@ -126,7 +126,7 @@ The workflow is created and enabled immediately.
 
 *Skip this step if the client does not use HubSpot-embedded forms.*
 
-The Form Instrumentation snippet captures the advocate code from the share URL and injects it into HubSpot form submissions so that friend Contacts are attributed to the correct advocate.
+The Manage Advocate Codes snippet captures the advocate code from the share URL and injects it into HubSpot form submissions so that friend Contacts are attributed to the correct advocate.
 
 > **Prerequisites:** Step 3 (Create Properties) must be completed before Step 5a. The `extole_advocate_code` Contact property must exist before HubSpot will offer it as a field option in the form builder. If the hidden field is not added to the form, the snippet will still run without errors — but the advocate code will be silently dropped at form submission and never land on the Contact record.
 
@@ -145,7 +145,7 @@ Repeat for each form you want to instrument.
 
 ### 5b — Get and deploy the snippet
 
-In the **Form Instrumentation** tab:
+In the **Manage Advocate Codes** tab:
 
 1. Set the **Advocate Code Property** (default: `extole_advocate_code`) — must match the property name in Step 3
 2. Set the **Referral URL Params** (default: `extole_shareable_code`) — the URL parameter name Extole puts on share links
@@ -244,6 +244,6 @@ For deeper debugging, check the **Settings Log** tab for recent configuration ac
 ## Known Limitations
 
 - **Cross-device attribution** — the advocate code cookie is browser-scoped. A friend who clicks on mobile and converts on a different device loses the attribution. Document this gap with the client.
-- **HubSpot-native forms only** — Form Instrumentation works with HubSpot's JS-embedded forms (v2 classic and v3 new form builder). Typeform, Marketo, and custom HTML forms are not supported.
+- **HubSpot-native forms only** — Manage Advocate Codes works with HubSpot's JS-embedded forms (v2 classic and v3 new form builder). Typeform, Marketo, and custom HTML forms are not supported.
 - **Operations Hub Professional required** — Starter tier clients cannot use this app. Must be confirmed before implementation.
 - **Share link label** — A default campaign label (`exhsappd`) is applied to all share links until the Extole shareables API makes the label optional. If the client's program does not have this label, share link creation will fail. Contact Extole support to ensure the label exists on the client's program.

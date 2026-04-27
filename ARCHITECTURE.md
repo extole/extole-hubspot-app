@@ -4,8 +4,8 @@
 
 The app has three independent features that share a common auth and settings layer:
 
-- **Event Configuration** — Admin defines record-triggered events in the UI. The app creates a Custom Workflow Action; HubSpot invokes it when a matching record change occurs. The dispatch function fires the event to Extole in real time.
-- **Form Instrumentation** — App generates a JavaScript snippet for the client's site. The snippet captures the advocate code from the share URL and persists it across page navigation so it can be injected into HubSpot forms, closing the friend attribution loop.
+- **Configure Events** — Admin defines record-triggered events in the UI. The app creates a Custom Workflow Action; HubSpot invokes it when a matching record change occurs. The dispatch function fires the event to Extole in real time.
+- **Manage Advocate Codes** — App generates a JavaScript snippet for the client's site. The snippet captures the advocate code from the share URL and persists it across page navigation so it can be injected into HubSpot forms, closing the friend attribution loop.
 - **Share Links** — App auto-generates Extole share links for Contacts and writes them back to a configurable Contact property. Supports auto-generate on create and bulk backfill for existing contacts.
 
 A CRM sidebar card on the Contact record surfaces the captured attribution data at a glance.
@@ -18,8 +18,8 @@ A CRM sidebar card on the Contact record surfaces the captured attribution data 
 UI Extensions                     Serverless Functions              External
 ─────────────────────────────────  ────────────────────────────────  ────────────────────────
 Settings.tsx (settings page)  →   settings.js                   →   Extole API (api.extole.io)
-  Event Configuration                Settings CRUD                   HubSpot CRM API
-  Form Instrumentation               Workflow CRUD                   (api.hubapi.com)
+  Configure Events                   Settings CRUD                   HubSpot CRM API
+  Manage Advocate Codes              Workflow CRUD                   (api.hubapi.com)
   Share Links                        Share link generation
   Settings Log                       Log CRUD
 
@@ -112,7 +112,7 @@ sequenceDiagram
 
 ---
 
-## Form Instrumentation Flow
+## Manage Advocate Codes Flow
 
 ```mermaid
 sequenceDiagram
@@ -177,7 +177,7 @@ sequenceDiagram
 
 | Property | Type | Purpose |
 |---|---|---|
-| `extole_advocate_code` | Single-line text | Advocate code captured at form submission; written by Form Instrumentation snippet |
+| `extole_advocate_code` | Single-line text | Advocate code captured at form submission; written by the Manage Advocate Codes snippet |
 | `extole_share_link` | Single-line text | Extole share link URL; written back by Share Links feature |
 
 ### HubSpot Custom Object — Settings Log
@@ -195,7 +195,7 @@ Extole_Settings_Log__c (custom object)
 
 ### HubSpot Workflows (managed by app)
 
-One workflow per Event Configuration rule, plus one workflow for Auto Share Link if enabled. Workflows are standard HubSpot workflows — visible and editable in the HubSpot Workflows UI.
+One workflow per Configure Events rule, plus one workflow for Auto Share Link if enabled. Workflows are standard HubSpot workflows — visible and editable in the HubSpot Workflows UI.
 
 ---
 
@@ -230,7 +230,7 @@ One workflow per Event Configuration rule, plus one workflow for Auto Share Link
 
 ### dispatch.js
 
-Legacy. Originally served as the HubSpot workflow action callback endpoint. Event Configuration workflows now use inline `CUSTOM_CODE` with embedded tokens instead of a callback to this function. dispatch.js is still deployed but is not invoked by any current workflow.
+Legacy. Originally served as the HubSpot workflow action callback endpoint. Configure Events workflows now use inline `CUSTOM_CODE` with embedded tokens instead of a callback to this function. dispatch.js is still deployed but is not invoked by any current workflow.
 
 ---
 

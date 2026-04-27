@@ -6,12 +6,12 @@ A HubSpot UI Extension that connects HubSpot to Extole's offer platform. It clos
 
 ## Features
 
-### Event Configuration
+### Configure Events
 Define record-triggered events that fire to Extole when HubSpot records change. The app registers a Custom Workflow Action — admins create the workflow trigger in HubSpot's workflow builder; this app provides the action step that calls Extole with the configured event name and properties.
 
 Supports Contact, Deal, and other object types. Properties can be mapped from any HubSpot field.
 
-### Form Instrumentation
+### Manage Advocate Codes
 Generates a JavaScript snippet to embed on the client's site. When a friend arrives via an advocate's share link, the snippet:
 
 1. Reads `extole_shareable_code` from the URL and persists it in a 30-day cookie and localStorage.
@@ -35,7 +35,7 @@ Automatically generates Extole share links for contacts and writes them back to 
 
 - **Operations Hub Professional or higher** — required for serverless app functions (used by all three features).
 - **Extole account** with an API token — obtained from the Extole Tech Hub.
-- **HubSpot-native forms** on the client's site — Form Instrumentation only works with embedded HubSpot forms, not third-party form tools.
+- **HubSpot-native forms** on the client's site — Manage Advocate Codes only works with embedded HubSpot forms, not third-party form tools.
 
 ---
 
@@ -83,7 +83,6 @@ src/
       settings.js   # Serverless function backing the Settings page
       dispatch.js   # Serverless function for workflow action dispatches
       extole.js     # Extole API client (shared utility)
-docs/
-  install.md        # Installation walkthrough
-  spec.md           # Original feature spec
+install.md          # Installation walkthrough
+ARCHITECTURE.md     # Technical architecture overview
 ```

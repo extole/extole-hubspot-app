@@ -20,7 +20,7 @@ Before starting, confirm the following with the client:
 | **HubSpot tier** | Operations Hub **Professional** or higher — required for serverless functions. Starter tier cannot run this app. |
 | **HubSpot role** | Portal admin access — required to install apps and create workflows |
 | **Extole API token** | Long-lived bearer token for the client's Extole account |
-| **HubSpot-embedded forms** | Required for Manage Advocate Codes; Configure Events and Share Links work without it |
+| **HubSpot-embedded forms** | Required for Manage Advocate Codes; Configure Events and Manage Share Links work without it |
 
 ---
 
@@ -64,7 +64,7 @@ If the connection test fails, verify the token has API access on the client's Ex
 
 ## Step 3 — Create Contact Properties
 
-The Manage Advocate Codes snippet and Share Links feature write data to custom Contact properties. These must exist before using either feature.
+The Manage Advocate Codes snippet and Manage Share Links feature write data to custom Contact properties. These must exist before using either feature.
 
 In the **Configure Events** tab, find the **Properties** section:
 
@@ -163,9 +163,9 @@ In the **Manage Advocate Codes** tab:
 
 ---
 
-## Step 6 — Configure Share Links
+## Step 6 — Manage Share Links
 
-In the **Share Links** tab:
+In the **Manage Share Links** tab:
 
 1. Set the **Share Link Property** (default: `extole_share_link`) — the Contact property that will receive the generated share link URL
 2. Enable **Auto-generate Share Links** to create a share link for every new Contact automatically

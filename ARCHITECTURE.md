@@ -6,7 +6,7 @@ The app has three independent features that share a common auth and settings lay
 
 - **Configure Events** — Admin defines record-triggered events in the UI. The app creates a Custom Workflow Action; HubSpot invokes it when a matching record change occurs. The dispatch function fires the event to Extole in real time.
 - **Manage Advocate Codes** — App generates a JavaScript snippet for the client's site. The snippet captures the advocate code from the share URL and persists it across page navigation so it can be injected into HubSpot forms, closing the friend attribution loop.
-- **Share Links** — App auto-generates Extole share links for Contacts and writes them back to a configurable Contact property. Supports auto-generate on create and bulk backfill for existing contacts.
+- **Manage Share Links** — App auto-generates Extole share links for Contacts and writes them back to a configurable Contact property. Supports auto-generate on create and bulk backfill for existing contacts.
 
 A CRM sidebar card on the Contact record surfaces the captured attribution data at a glance.
 
@@ -20,7 +20,7 @@ UI Extensions                     Serverless Functions              External
 Settings.tsx (settings page)  →   settings.js                   →   Extole API (api.extole.io)
   Configure Events                   Settings CRUD                   HubSpot CRM API
   Manage Advocate Codes              Workflow CRUD                   (api.hubapi.com)
-  Share Links                        Share link generation
+  Manage Share Links                 Share link generation
   Settings Log                       Log CRUD
 
 NewCard.tsx (contact sidebar)       Workflow CUSTOM_CODE          →   Extole API
@@ -178,7 +178,7 @@ sequenceDiagram
 | Property | Type | Purpose |
 |---|---|---|
 | `extole_advocate_code` | Single-line text | Advocate code captured at form submission; written by the Manage Advocate Codes snippet |
-| `extole_share_link` | Single-line text | Extole share link URL; written back by Share Links feature |
+| `extole_share_link` | Single-line text | Extole share link URL; written back by Manage Share Links feature |
 
 ### HubSpot Custom Object — Settings Log
 

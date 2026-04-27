@@ -763,7 +763,7 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
       <Flex direction="row" gap="extra-small">
         <Button variant={activeTab === 'events' ? undefined : 'transparent'} onClick={() => setActiveTab('events')}>Configure Events</Button>
         <Button variant={activeTab === 'forms' ? undefined : 'transparent'} onClick={() => setActiveTab('forms')}>Manage Advocate Codes</Button>
-        <Button variant={activeTab === 'sharelinks' ? undefined : 'transparent'} onClick={() => setActiveTab('sharelinks')}>Share Links</Button>
+        <Button variant={activeTab === 'sharelinks' ? undefined : 'transparent'} onClick={() => setActiveTab('sharelinks')}>Manage Share Links</Button>
         <Button variant={activeTab === 'log' ? undefined : 'transparent'} onClick={() => setActiveTab('log')}>Settings Log</Button>
       </Flex>
       <Divider />

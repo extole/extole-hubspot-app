@@ -22,7 +22,7 @@ Works with both v2 (`hbspt.forms.create`) and v3 (`<div class="hs-form-frame">`)
 
 **Required setup per form:** Add `extole_advocate_code` as a hidden field in the HubSpot form builder. HubSpot only saves fields that are explicitly defined on the form.
 
-### Share Links
+### Manage Share Links
 Automatically generates Extole share links for contacts and writes them back to a configurable HubSpot contact property.
 
 - **Auto-generate on create:** Creates a share link when a new contact is enrolled.

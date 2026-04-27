@@ -1068,7 +1068,7 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
 
           <Divider />
           <Text format={{ fontWeight: 'bold' }}>Generated Snippet</Text>
-          <Text>Copy this snippet and embed it on your site, after the HubSpot tracking script. Works with both classic (v2) and new form builder (v3) embeds.</Text>
+          <Text>Copy this snippet and embed it on your site before the HubSpot forms script (js.hsforms.net). Works with both classic (v2) and new form builder (v3) embeds.</Text>
           <TextArea
             label=""
             name="snippet"

@@ -1045,11 +1045,15 @@ async function getAppSettingsObjectTypeId(hsToken) {
 
 async function ensureAppSettingsSchema(hsToken) {
   const existing = await getAppSettingsObjectTypeId(hsToken);
-  if (existing) return existing;
+  if (existing) {
+    await hsPatch(hsToken, `/crm/v3/schemas/${existing}`, { showInMenuAndBoardView: false });
+    return existing;
+  }
   const createRes = await hsPost(hsToken, '/crm/v3/schemas', {
     name: APP_SETTINGS_OBJECT_NAME,
     labels: { singular: 'Extole App Settings', plural: 'Extole App Settings' },
     primaryDisplayProperty: 'eas_name',
+    showInMenuAndBoardView: false,
     properties: [
       { name: 'eas_name',       label: 'Name',       type: 'string',   fieldType: 'text',     groupName: 'extole_app_settings_information' },
       { name: 'eas_config',     label: 'Config',     type: 'string',   fieldType: 'textarea', groupName: 'extole_app_settings_information' },
@@ -1141,12 +1145,16 @@ async function getLogObjectTypeId(hsToken) {
 async function handleCreateLogSchema(hsToken) {
   // Check if already exists
   const existingId = await getLogObjectTypeId(hsToken);
-  if (existingId) return { created: false, objectTypeId: existingId };
+  if (existingId) {
+    await hsPatch(hsToken, `/crm/v3/schemas/${existingId}`, { showInMenuAndBoardView: false });
+    return { created: false, objectTypeId: existingId };
+  }
 
   // Create the custom object schema
   const schemaBody = {
     name: LOG_OBJECT_NAME,
     labels: { singular: 'Extole App Log', plural: 'Extole App Logs' },
+    showInMenuAndBoardView: false,
     primaryDisplayProperty: 'eal_action',
     properties: [
       {
@@ -1343,6 +1351,17 @@ function hsGet(token, path) {
 function hsPost(token, path, body) {
   return fetch(`${HS_API_BASE}${path}`, {
     method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+function hsPatch(token, path, body) {
+  return fetch(`${HS_API_BASE}${path}`, {
+    method: 'PATCH',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',

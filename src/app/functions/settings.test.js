@@ -345,6 +345,117 @@ describe('handleGetForms', () => {
   });
 });
 
+// ─── campaignReferencesEvent ──────────────────────────────────────────────────
+
+describe('campaignReferencesEvent', () => {
+  it('matches shape 1: campaign.event_names[]', () => {
+    const campaign = { name: 'My Campaign', event_names: ['hubspot_deal_closed_won', 'other_event'] };
+    expect(t.campaignReferencesEvent(campaign, 'hubspot_deal_closed_won')).toBe(true);
+    expect(t.campaignReferencesEvent(campaign, 'unrelated_event')).toBe(false);
+  });
+
+  it('matches shape 2: campaign.triggers[].event_name', () => {
+    const campaign = { name: 'My Campaign', triggers: [{ event_name: 'hubspot_contact_created' }] };
+    expect(t.campaignReferencesEvent(campaign, 'hubspot_contact_created')).toBe(true);
+    expect(t.campaignReferencesEvent(campaign, 'other_event')).toBe(false);
+  });
+
+  it('matches shape 2: campaign.triggers[].event_names[]', () => {
+    const campaign = { name: 'My Campaign', triggers: [{ event_names: ['hubspot_deal_created', 'other'] }] };
+    expect(t.campaignReferencesEvent(campaign, 'hubspot_deal_created')).toBe(true);
+  });
+
+  it('matches shape 3: campaign.builds[].triggers[].event_name', () => {
+    const campaign = { builds: [{ triggers: [{ event_name: 'hubspot_deal_closed_won' }] }] };
+    expect(t.campaignReferencesEvent(campaign, 'hubspot_deal_closed_won')).toBe(true);
+  });
+
+  it('matches shape 3: campaign.builds[].triggers[].event_names[]', () => {
+    const campaign = { builds: [{ triggers: [{ event_names: ['hubspot_deal_closed_won'] }] }] };
+    expect(t.campaignReferencesEvent(campaign, 'hubspot_deal_closed_won')).toBe(true);
+  });
+
+  it('is case-insensitive', () => {
+    const campaign = { event_names: ['Hubspot_Deal_Closed_Won'] };
+    expect(t.campaignReferencesEvent(campaign, 'hubspot_deal_closed_won')).toBe(true);
+  });
+
+  it('returns false when campaign has no event data', () => {
+    expect(t.campaignReferencesEvent({ name: 'Empty Campaign' }, 'any_event')).toBe(false);
+  });
+});
+
+// ─── handleCheckEventUsage ────────────────────────────────────────────────────
+
+describe('handleCheckEventUsage', () => {
+  const TOKEN = 'extole-test-token';
+
+  function mockCampaigns(campaigns) {
+    return { ok: true, json: async () => campaigns };
+  }
+
+  it('returns NOT_FOUND when no campaigns reference the event', async () => {
+    global.fetch.mockResolvedValueOnce(mockCampaigns([
+      { name: 'Other Campaign', event_names: ['some_other_event'] },
+    ]));
+    const result = await t.handleCheckEventUsage(TOKEN, { eventName: 'hubspot_deal_closed_won' });
+    expect(result.status).toBe('NOT_FOUND');
+  });
+
+  it('returns FOUND with campaign name when event is in use', async () => {
+    global.fetch.mockResolvedValueOnce(mockCampaigns([
+      { name: 'Referral Program', event_names: ['hubspot_deal_closed_won'] },
+    ]));
+    const result = await t.handleCheckEventUsage(TOKEN, { eventName: 'hubspot_deal_closed_won' });
+    expect(result.status).toBe('FOUND');
+    expect(result.campaignName).toBe('Referral Program');
+  });
+
+  it('returns FOUND on first matching campaign and short-circuits', async () => {
+    global.fetch.mockResolvedValueOnce(mockCampaigns([
+      { name: 'First Match', event_names: ['hubspot_contact_created'] },
+      { name: 'Second Match', event_names: ['hubspot_contact_created'] },
+    ]));
+    const result = await t.handleCheckEventUsage(TOKEN, { eventName: 'hubspot_contact_created' });
+    expect(result.status).toBe('FOUND');
+    expect(result.campaignName).toBe('First Match');
+  });
+
+  it('returns UNKNOWN on API error', async () => {
+    global.fetch.mockResolvedValueOnce({ ok: false, status: 500 });
+    const result = await t.handleCheckEventUsage(TOKEN, { eventName: 'some_event' });
+    expect(result.status).toBe('UNKNOWN');
+  });
+
+  it('returns UNKNOWN on fetch exception', async () => {
+    global.fetch.mockRejectedValueOnce(new Error('network error'));
+    const result = await t.handleCheckEventUsage(TOKEN, { eventName: 'some_event' });
+    expect(result.status).toBe('UNKNOWN');
+  });
+
+  it('returns NOT_FOUND immediately when eventName is empty', async () => {
+    const result = await t.handleCheckEventUsage(TOKEN, { eventName: '' });
+    expect(result.status).toBe('NOT_FOUND');
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('returns UNKNOWN when token is missing', async () => {
+    const result = await t.handleCheckEventUsage(null, { eventName: 'some_event' });
+    expect(result.status).toBe('UNKNOWN');
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('handles campaigns wrapped in a results array', async () => {
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ results: [{ name: 'Wrapped Campaign', event_names: ['hubspot_contact_created'] }] }),
+    });
+    const result = await t.handleCheckEventUsage(TOKEN, { eventName: 'hubspot_contact_created' });
+    expect(result.status).toBe('FOUND');
+    expect(result.campaignName).toBe('Wrapped Campaign');
+  });
+});
+
 // ─── handleGetAutoShareLinkStatus ────────────────────────────────────────────
 
 describe('handleGetAutoShareLinkStatus', () => {

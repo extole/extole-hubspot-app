@@ -1444,5 +1444,7 @@ if (process.env.NODE_ENV === 'test') {
     handleValidateProperty,
     handleGetForms,
     handleGetAutoShareLinkStatus,
+    handleCheckEventUsage,
+    campaignReferencesEvent,
   };
 }

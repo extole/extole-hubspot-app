@@ -2,7 +2,9 @@
 
 ## Overview
 
-Installation takes about 20–30 minutes. After completing these steps the app is fully operational:
+Installation takes about 20–30 minutes and is performed by the Extole implementation team. The Extole team deploys the app to the client's HubSpot portal via the HubSpot CLI; the client then configures it through the app UI.
+
+After completing these steps the app is fully operational:
 - HubSpot record changes fire events to Extole in real time
 - Referral attribution is captured at form submission and stored on the Contact record
 - Share links are generated for new contacts and written back to HubSpot
@@ -13,56 +15,65 @@ Installation takes about 20–30 minutes. After completing these steps the app i
 
 ## Prerequisites
 
+### From the client
+
 Before starting, confirm the following with the client:
 
 | Requirement | Details |
 |---|---|
 | **HubSpot tier** | Operations Hub **Professional** or higher — required for serverless functions. Starter tier cannot run this app. |
-| **HubSpot role** | Portal admin access — required to install apps and create workflows |
-| **Extole API token** | Long-lived bearer token for the client's Extole account |
+| **HubSpot portal access** | The Extole team needs CLI access to the client's portal. Either: (a) client adds an Extole team member as a portal admin, or (b) client generates a Personal Access Key (PAK) and shares it securely. See Step 0. |
+| **Extole API token** | Long-lived bearer token for the client's Extole account — generated in the Extole Security Center |
 | **HubSpot-embedded forms** | Required for Manage Advocate Codes; Configure Events and Manage Share Links work without it |
+
+### Personal Access Key (PAK)
+
+If the client is providing a PAK rather than adding the Extole team member as a portal admin:
+
+1. Client logs into HubSpot → **Settings → Integrations → Private Apps**
+2. Create a new private app with the scopes listed in the app's `app-hsmeta.json`
+3. Copy the access token and share it securely with the Extole team
 
 ---
 
-## Step 0 — Local CLI Setup (developers only)
+## Step 0 — CLI Setup and Deploy
 
-*Skip this step if you are not deploying or developing the app locally.*
+The HubSpot CLI is required to deploy the app to the client's portal and set the Extole API token as a portal secret.
 
-The HubSpot CLI requires a `hubspot.config.yml` in the project root with your personal access key and portal ID. This file is gitignored — copy the example and fill in your values:
+### 0a — Configure the CLI for the client's portal
+
+The HubSpot CLI requires a `hubspot.config.yml` in the project root. This file is gitignored — copy the example and fill in the client's values:
 
 ```bash
 cp hubspot.config.example.yml hubspot.config.yml
 ```
 
-Then edit `hubspot.config.yml`:
-- `name` / `defaultPortal` — your chosen account alias (e.g. `my-portal`)
-- `personalAccessKey` — generate one in HubSpot under **Settings → Integrations → Private Apps**
-- `portalId` — your HubSpot portal ID (visible in the URL when logged in)
+Edit `hubspot.config.yml`:
+- `name` / `defaultPortal` — a local alias for the client portal (e.g. `acme-corp`)
+- `personalAccessKey` — the PAK from the client (or your own if added as portal admin)
+- `portalId` — the client's HubSpot portal ID (visible in the URL when logged in)
+
+### 0b — Deploy the app
+
+```bash
+hs project upload
+```
+
+This builds and deploys all app components to the client's portal. The app will appear under **Settings → Integrations** once deployed.
+
+### 0c — Set the Extole API token
+
+```bash
+hs secret add EXTOLE_API_TOKEN
+```
+
+When prompted, paste the client's Extole API token. This stores the token as a portal-level secret accessible only to the app's serverless functions.
+
+Verify the connection after deployment by opening the app and clicking **Test Connection** in the Configure Events tab.
 
 ---
 
-## Step 1 — Install the App
-
-Send the client the private install link. The client (or you, if you have admin access to their portal) must be a **portal admin** to complete installation.
-
-After install, the app appears in the HubSpot portal under **Settings → Integrations**.
-
----
-
-## Step 2 — Connect Extole
-
-1. Open the Extole app from the HubSpot App Marketplace sidebar or navigate to it via the main nav
-2. In the **Settings** tab, find the **API Token** field
-3. Paste the client's Extole API token
-4. Set the **Environment** to `production` (or `sandbox` for testing)
-5. Click **Test Connection** — confirm it shows green
-6. Click **Save**
-
-If the connection test fails, verify the token has API access on the client's Extole account.
-
----
-
-## Step 3 — Create Contact Properties
+## Step 1 — Create Contact Properties
 
 The Manage Advocate Codes snippet and Manage Share Links feature write data to custom Contact properties. These must exist before using either feature.
 
@@ -82,7 +93,7 @@ This creates the properties if they don't exist. The operation is idempotent —
 
 ---
 
-## Step 4 — Configure Event Workflows
+## Step 2 — Configure Event Workflows
 
 In the **Configure Events** tab, create one workflow per Extole event the client needs.
 
@@ -122,15 +133,15 @@ The workflow is created and enabled immediately.
 
 ---
 
-## Step 5 — Deploy Form Snippet
+## Step 3 — Deploy Form Snippet
 
 *Skip this step if the client does not use HubSpot-embedded forms.*
 
 The Manage Advocate Codes snippet captures the advocate code from the share URL and injects it into HubSpot form submissions so that friend Contacts are attributed to the correct advocate.
 
-> **Prerequisites:** Step 3 (Create Properties) must be completed before Step 5a. The `extole_advocate_code` Contact property must exist before HubSpot will offer it as a field option in the form builder. If the hidden field is not added to the form, the snippet will still run without errors — but the advocate code will be silently dropped at form submission and never land on the Contact record.
+> **Prerequisites:** Step 1 (Create Properties) must be completed before Step 3a. The `extole_advocate_code` Contact property must exist before HubSpot will offer it as a field option in the form builder. If the hidden field is not added to the form, the snippet will still run without errors — but the advocate code will be silently dropped at form submission and never land on the Contact record.
 
-### 5a — Add hidden field to each HubSpot form
+### 3a — Add hidden field to each HubSpot form
 
 For every form you want to instrument, add `extole_advocate_code` as a hidden field in HubSpot's form builder.
 
@@ -143,15 +154,15 @@ For every form you want to instrument, add `extole_advocate_code` as a hidden fi
 
 Repeat for each form you want to instrument.
 
-### 5b — Get and deploy the snippet
+### 3b — Get and deploy the snippet
 
 In the **Manage Advocate Codes** tab:
 
-1. Set the **Advocate Code Property** (default: `extole_advocate_code`) — must match the property name in Step 3
+1. Set the **Advocate Code Property** (default: `extole_advocate_code`) — must match the property name in Step 1
 2. Set the **Referral URL Params** (default: `extole_shareable_code`) — the URL parameter name Extole puts on share links
 3. Optionally set form targeting (all forms, or specific form IDs)
 4. Copy the generated snippet
-5. Add the snippet to the client's site — it must load **before** any HubSpot form script
+5. Add the snippet to the client's site — it must load **before** the HubSpot forms script (`js.hsforms.net`)
 
 **Where to place it:** Add it once, site-wide — typically via a tag manager (GTM, etc.) or the site's global `<head>` template, before the `//js.hsforms.net/...` script tag. It does not need to be added per page.
 
@@ -163,7 +174,7 @@ In the **Manage Advocate Codes** tab:
 
 ---
 
-## Step 6 — Manage Share Links
+## Step 4 — Manage Share Links
 
 In the **Manage Share Links** tab:
 
@@ -182,7 +193,7 @@ To generate share links for contacts that existed before the app was installed:
 
 ---
 
-## Step 7 — Enable the CRM Card
+## Step 5 — Enable the CRM Card
 
 The Extole app includes a sidebar card on the Contact record that shows the captured advocate code and HubSpot visitor ID.
 
@@ -197,14 +208,14 @@ The card will show "No referral data captured" for contacts without attribution 
 
 ---
 
-## Step 8 — Verify End-to-End
+## Step 6 — Verify End-to-End
 
 ### Verify event delivery
 
 After creating the Contact Created workflow, create a test contact in HubSpot. Confirm the event arrives in Extole:
 
 ```bash
-extole stream --app-type hubspot_crm --sandbox
+extole stream --app-type extole-hubspot-app --sandbox
 ```
 
 Or check a specific person:
@@ -230,12 +241,12 @@ Full attribution requires a friend to arrive via a share link and submit a form.
 
 | Symptom | Likely cause |
 |---|---|
-| Test Connection fails | Token wrong or expired — re-paste in Settings |
-| Workflow fires but no event in Extole | The Extole token is embedded in the workflow at creation time. If the token was updated in Settings after the workflow was created, use **Update Workflow** (or delete and recreate) to push the new token into the workflow's custom code |
-| `extole_advocate_code` empty on Contact | Hidden field not added to form in form builder (Step 5a) — snippet runs silently but code is dropped at submission; or snippet not loading before form script; or `extole_advocate_code` property not yet created (Step 3) |
+| Test Connection fails | Token wrong or expired — re-run `hs secret add EXTOLE_API_TOKEN` with the correct value |
+| Workflow fires but no event in Extole | The Extole token is embedded in the workflow at creation time. If the token was updated after the workflow was created, use **Update Workflow** (or delete and recreate) to push the new token into the workflow's custom code |
+| `extole_advocate_code` empty on Contact | Hidden field not added to form in form builder (Step 3a) — snippet runs silently but code is dropped at submission; or snippet not loading before forms script; or `extole_advocate_code` property not yet created (Step 1) |
 | Form snippet has no effect | Snippet must load before `//js.hsforms.net/...` — check script order in `<head>` |
 | Share link backfill shows errors | Extole API token lacks shareables scope; or contacts have no email address |
-| CRM card not showing | Layout customization not saved per Step 7 |
+| CRM card not showing | Layout customization not saved per Step 5 |
 
 For deeper debugging, check the **Settings Log** tab for recent configuration actions and errors.
 
@@ -247,3 +258,4 @@ For deeper debugging, check the **Settings Log** tab for recent configuration ac
 - **HubSpot-native forms only** — Manage Advocate Codes works with HubSpot's JS-embedded forms (v2 classic and v3 new form builder). Typeform, Marketo, and custom HTML forms are not supported.
 - **Operations Hub Professional required** — Starter tier clients cannot use this app. Must be confirmed before implementation.
 - **Share link label** — A default campaign label (`exhsappd`) is applied to all share links until the Extole shareables API makes the label optional. If the client's program does not have this label, share link creation will fail. Contact Extole support to ensure the label exists on the client's program.
+- **Distribution model** — The app is currently deployed via the HubSpot CLI (not a self-serve install link). Each client install requires CLI access to the client's portal. Self-serve distribution via private install link or marketplace would require additional infrastructure investment.

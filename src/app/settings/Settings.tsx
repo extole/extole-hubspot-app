@@ -204,6 +204,8 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
   const [creatingWorkflow, setCreatingWorkflow] = useState(false);
   const [createResult, setCreateResult] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleteCheckStatus, setDeleteCheckStatus] = useState<'checking' | 'NOT_FOUND' | 'FOUND' | 'UNKNOWN' | null>(null);
+  const [deleteCheckCampaign, setDeleteCheckCampaign] = useState<string | null>(null);
 
   // ── Navigation ──
   type NavTab = 'events' | 'forms' | 'sharelinks' | 'log';
@@ -650,6 +652,25 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
     }).then(() => handleLoadWorkflows());
   }
 
+  function handleOpenDeleteConfirm(w: WorkflowInfo) {
+    setConfirmDeleteId(w.id);
+    setDeleteCheckCampaign(null);
+    if (!w.enabled) {
+      setDeleteCheckStatus('NOT_FOUND');
+      return;
+    }
+    setDeleteCheckStatus('checking');
+    runServerlessFunction({
+      name: 'extole_settings',
+      parameters: { action: 'checkEventUsage', eventName: w.eventName },
+      propertiesToSend: [],
+    }).then((res: any) => {
+      const result = res?.response;
+      setDeleteCheckStatus(result?.status ?? 'UNKNOWN');
+      setDeleteCheckCampaign(result?.campaignName ?? null);
+    }).catch(() => setDeleteCheckStatus('UNKNOWN'));
+  }
+
   function handleDeleteWorkflow(flowId: string, workflowName?: string) {
     runServerlessFunction({
       name: 'extole_settings',
@@ -657,6 +678,8 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
       propertiesToSend: [],
     }).then(() => {
       setConfirmDeleteId(null);
+      setDeleteCheckStatus(null);
+      setDeleteCheckCampaign(null);
       if (editingWorkflowId === flowId) {
         setEditingWorkflowId(null);
         setShowEventForm(false);
@@ -856,7 +879,7 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
                                 Activate
                               </Dropdown.ButtonItem>
                             )}
-                            <Dropdown.ButtonItem onClick={() => setConfirmDeleteId(w.id)}>
+                            <Dropdown.ButtonItem onClick={() => handleOpenDeleteConfirm(w)}>
                               Delete
                             </Dropdown.ButtonItem>
                           </Dropdown>
@@ -869,15 +892,42 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
 
               {confirmDeleteId && (() => {
                 const w = sortedWorkflows.find(wf => wf.id === confirmDeleteId);
+                const cancel = () => { setConfirmDeleteId(null); setDeleteCheckStatus(null); setDeleteCheckCampaign(null); };
                 return (
-                  <Flex direction="row" gap="small" align="center">
+                  <Flex direction="column" gap="small">
                     <Text>Delete "{w?.name ?? confirmDeleteId}"?</Text>
-                    <Button onClick={() => handleDeleteWorkflow(confirmDeleteId, w?.name)} variant="destructive">
-                      Delete
-                    </Button>
-                    <Button onClick={() => setConfirmDeleteId(null)} variant="secondary">
-                      Cancel
-                    </Button>
+                    {deleteCheckStatus === 'checking' && (
+                      <Text>Checking Extole campaign usage…</Text>
+                    )}
+                    {deleteCheckStatus === 'NOT_FOUND' && (
+                      <Text>This event is not referenced by any active Extole campaigns.</Text>
+                    )}
+                    {deleteCheckStatus === 'FOUND' && (
+                      <Text>This event is used by the active Extole campaign "{deleteCheckCampaign}". Deleting it may break campaign behavior.</Text>
+                    )}
+                    {deleteCheckStatus === 'UNKNOWN' && (
+                      <Text>Could not verify whether this event is in use by Extole campaigns.</Text>
+                    )}
+                    <Flex direction="row" gap="small" align="center">
+                      {(deleteCheckStatus === 'NOT_FOUND') && (
+                        <Button onClick={() => handleDeleteWorkflow(confirmDeleteId, w?.name)} variant="destructive">
+                          Delete
+                        </Button>
+                      )}
+                      {(deleteCheckStatus === 'FOUND' || deleteCheckStatus === 'UNKNOWN') && (
+                        <>
+                          <Button onClick={() => handleToggleWorkflow(confirmDeleteId, false)} variant="secondary">
+                            Disable Instead
+                          </Button>
+                          <Button onClick={() => handleDeleteWorkflow(confirmDeleteId, w?.name)} variant="destructive">
+                            Delete Anyway
+                          </Button>
+                        </>
+                      )}
+                      <Button onClick={cancel} variant="secondary">
+                        Cancel
+                      </Button>
+                    </Flex>
                   </Flex>
                 );
               })()}

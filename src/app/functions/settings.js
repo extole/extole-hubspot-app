@@ -70,6 +70,9 @@ exports.main = async (context) => {
     case 'saveAppSettings':
       return handleSaveAppSettings(hsToken, params);
 
+    case 'checkEventUsage':
+      return handleCheckEventUsage(extoleToken, params);
+
     case 'getCampaigns':
       return handleGetCampaigns(extoleToken);
 
@@ -721,6 +724,63 @@ async function handleGetCampaigns(extoleToken) {
   } catch (e) {
     return { error: `getCampaigns exception: ${e && e.message || String(e)}`, campaigns: [] };
   }
+}
+
+async function handleCheckEventUsage(extoleToken, { eventName }) {
+  if (!eventName) return { status: 'NOT_FOUND' };
+  if (!extoleToken) return { status: 'UNKNOWN', reason: 'EXTOLE_API_TOKEN not configured' };
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    let res;
+    try {
+      res = await fetch(`${EXTOLE_API_BASE}/v4/campaigns?state=PUBLISHED,ACTIVE`, {
+        headers: { Authorization: `Bearer ${extoleToken}`, ...EXTOLE_APP_TYPE_HEADER },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (!res.ok) return { status: 'UNKNOWN', reason: `Extole API ${res.status}` };
+    const data = await res.json();
+    const campaigns = Array.isArray(data) ? data : (data.campaigns || data.results || []);
+    for (const campaign of campaigns) {
+      if (campaignReferencesEvent(campaign, eventName)) {
+        return { status: 'FOUND', campaignName: campaign.name || campaign.campaign_id || 'unknown' };
+      }
+    }
+    return { status: 'NOT_FOUND' };
+  } catch (e) {
+    const reason = e && e.name === 'AbortError' ? 'timeout' : (e && e.message || String(e));
+    return { status: 'UNKNOWN', reason };
+  }
+}
+
+function campaignReferencesEvent(campaign, eventName) {
+  const name = eventName.toLowerCase();
+  // Shape 1: campaign.event_names[]
+  if (Array.isArray(campaign.event_names)) {
+    if (campaign.event_names.some(n => String(n).toLowerCase() === name)) return true;
+  }
+  // Shape 2: campaign.triggers[].event_name or triggers[].event_names[]
+  if (Array.isArray(campaign.triggers)) {
+    for (const t of campaign.triggers) {
+      if (t.event_name && String(t.event_name).toLowerCase() === name) return true;
+      if (Array.isArray(t.event_names) && t.event_names.some(n => String(n).toLowerCase() === name)) return true;
+    }
+  }
+  // Shape 3: campaign.builds[].triggers[].event_name or nested event_names[]
+  if (Array.isArray(campaign.builds)) {
+    for (const b of campaign.builds) {
+      if (Array.isArray(b.triggers)) {
+        for (const t of b.triggers) {
+          if (t.event_name && String(t.event_name).toLowerCase() === name) return true;
+          if (Array.isArray(t.event_names) && t.event_names.some(n => String(n).toLowerCase() === name)) return true;
+        }
+      }
+    }
+  }
+  return false;
 }
 
 async function handleCreateShareLinkProperty(hsToken, { propertyName, actor }) {

@@ -1370,15 +1370,14 @@ function EventForm({
   const [propertiesError, setPropertiesError] = useState('');
 
   useEffect(() => {
-    const needsProperty = form.triggerType === 'FIELD_CHANGED' || form.triggerType === 'FIELD_VALUE';
-    if (!needsProperty || !onLoadObjectProperties || !form.triggerObject) return;
+    if (!onLoadObjectProperties || !form.triggerObject) return;
     setPropertiesLoading(true);
     setPropertiesError('');
     onLoadObjectProperties(form.triggerObject)
       .then(props => setObjectProperties(props))
       .catch((e) => { setObjectProperties([]); setPropertiesError(String(e)); })
       .finally(() => setPropertiesLoading(false));
-  }, [form.triggerObject, form.triggerType]);
+  }, [form.triggerObject]);
 
   function setTriggerObject(v: string) {
     const defaults = DEFAULT_MAPPINGS[v] ? [...DEFAULT_MAPPINGS[v]] : [];
@@ -1542,9 +1541,7 @@ function EventForm({
       <Divider />
       <Text format={{ fontWeight: 'bold' }}>Field Mappings</Text>
       <Text>
-        Map Extole parameter names to HubSpot property internal names.
-        Use the internal name exactly as it appears in HubSpot (e.g. email, firstname, hs_object_id).
-        Static values are passed through as literals.
+        Map Extole parameter names to HubSpot properties. Static values are passed through as literals.
       </Text>
 
       {form.fieldMappings.map((mapping, i) => (
@@ -1571,16 +1568,29 @@ function EventForm({
             />
           </Box>
           <Box flex={2}>
-            <Input
-              label={mapping.source === 'property' ? 'HubSpot property' : 'Static value'}
-              name={`val_${i}`}
-              value={mapping.value}
-              onChange={(v) => updateMapping(i, 'value', v)}
-              onBlur={(v) => { if (mapping.source === 'property') validatePropertyAt(i, v); }}
-              placeholder={mapping.source === 'property' ? 'e.g. email' : 'e.g. hubspot_crm'}
-              error={mapping.source === 'property' && !!propErrors[i]}
-              validationMessage={mapping.source === 'property' && propErrors[i] ? 'Property not found in HubSpot' : undefined}
-            />
+            {mapping.source === 'property' && objectProperties.length > 0 ? (
+              <Select
+                label="HubSpot property"
+                name={`val_${i}`}
+                value={mapping.value}
+                onChange={(v) => updateMapping(i, 'value', v)}
+                options={[
+                  { label: '— select a property —', value: '' },
+                  ...objectProperties.map(p => ({ label: `${p.label} (${p.value})`, value: p.value })),
+                ]}
+              />
+            ) : (
+              <Input
+                label={mapping.source === 'property' ? 'HubSpot property' : 'Static value'}
+                name={`val_${i}`}
+                value={mapping.value}
+                onChange={(v) => updateMapping(i, 'value', v)}
+                onBlur={(v) => { if (mapping.source === 'property') validatePropertyAt(i, v); }}
+                placeholder={mapping.source === 'property' ? 'e.g. email' : 'e.g. hubspot_crm'}
+                error={mapping.source === 'property' && !!propErrors[i]}
+                validationMessage={mapping.source === 'property' && propErrors[i] ? 'Property not found in HubSpot' : undefined}
+              />
+            )}
           </Box>
           <Button onClick={() => removeMapping(i)}>Delete</Button>
         </Flex>

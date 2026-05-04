@@ -390,38 +390,61 @@ describe('campaignReferencesEvent', () => {
 describe('handleCheckEventUsage', () => {
   const TOKEN = 'extole-test-token';
 
-  function mockCampaigns(campaigns) {
-    return { ok: true, json: async () => campaigns };
+  // Mock the two-call flow: summaries list + per-campaign detail fetches.
+  // summaries: array of { campaign_id, state, name }
+  // details:   array of full campaign objects (one per active summary, in order)
+  function mockFlow(summaries, details) {
+    global.fetch.mockResolvedValueOnce({ ok: true, json: async () => summaries });
+    for (const d of details) {
+      global.fetch.mockResolvedValueOnce({ ok: true, json: async () => d });
+    }
   }
 
   it('returns NOT_FOUND when no campaigns reference the event', async () => {
-    global.fetch.mockResolvedValueOnce(mockCampaigns([
-      { name: 'Other Campaign', event_names: ['some_other_event'] },
-    ]));
+    mockFlow(
+      [{ campaign_id: '1', state: 'LIVE', name: 'Other Campaign' }],
+      [{ name: 'Other Campaign', steps: [{ triggers: [{ event_names: ['some_other_event'] }] }] }],
+    );
     const result = await t.handleCheckEventUsage(TOKEN, { eventName: 'hubspot_deal_closed_won' });
     expect(result.status).toBe('NOT_FOUND');
   });
 
-  it('returns FOUND with campaign name when event is in use', async () => {
-    global.fetch.mockResolvedValueOnce(mockCampaigns([
-      { name: 'Referral Program', event_names: ['hubspot_deal_closed_won'] },
-    ]));
+  it('returns FOUND with campaign name when event is in steps triggers', async () => {
+    mockFlow(
+      [{ campaign_id: '1', state: 'LIVE', name: 'Referral Program' }],
+      [{ name: 'Referral Program', steps: [{ triggers: [{ event_names: ['hubspot_deal_closed_won'] }] }] }],
+    );
     const result = await t.handleCheckEventUsage(TOKEN, { eventName: 'hubspot_deal_closed_won' });
     expect(result.status).toBe('FOUND');
     expect(result.campaignName).toBe('Referral Program');
   });
 
-  it('returns FOUND on first matching campaign and short-circuits', async () => {
-    global.fetch.mockResolvedValueOnce(mockCampaigns([
-      { name: 'First Match', event_names: ['hubspot_contact_created'] },
-      { name: 'Second Match', event_names: ['hubspot_contact_created'] },
-    ]));
+  it('returns FOUND when event matches across multiple campaigns', async () => {
+    mockFlow(
+      [
+        { campaign_id: '1', state: 'LIVE', name: 'No Match' },
+        { campaign_id: '2', state: 'LIVE', name: 'Loans Program' },
+      ],
+      [
+        { name: 'No Match', steps: [{ triggers: [{ event_names: ['other_event'] }] }] },
+        { name: 'Loans Program', steps: [{ triggers: [{ event_names: ['hubspot_contact_created'] }] }] },
+      ],
+    );
     const result = await t.handleCheckEventUsage(TOKEN, { eventName: 'hubspot_contact_created' });
     expect(result.status).toBe('FOUND');
-    expect(result.campaignName).toBe('First Match');
+    expect(result.campaignName).toBe('Loans Program');
   });
 
-  it('returns UNKNOWN on API error', async () => {
+  it('skips DRAFT campaigns from summaries', async () => {
+    mockFlow(
+      [{ campaign_id: '1', state: 'DRAFT', name: 'Draft Campaign' }],
+      [], // no detail fetches — DRAFT filtered out
+    );
+    const result = await t.handleCheckEventUsage(TOKEN, { eventName: 'hubspot_contact_created' });
+    expect(result.status).toBe('NOT_FOUND');
+  });
+
+  it('returns UNKNOWN when summaries call fails', async () => {
     global.fetch.mockResolvedValueOnce({ ok: false, status: 500 });
     const result = await t.handleCheckEventUsage(TOKEN, { eventName: 'some_event' });
     expect(result.status).toBe('UNKNOWN');
@@ -445,14 +468,12 @@ describe('handleCheckEventUsage', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it('handles campaigns wrapped in a results array', async () => {
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ results: [{ name: 'Wrapped Campaign', event_names: ['hubspot_contact_created'] }] }),
-    });
+  it('handles a failed detail fetch gracefully (skips null)', async () => {
+    global.fetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ campaign_id: '1', state: 'LIVE', name: 'C1' }] })
+      .mockResolvedValueOnce({ ok: false, status: 503 }); // detail fetch fails
     const result = await t.handleCheckEventUsage(TOKEN, { eventName: 'hubspot_contact_created' });
-    expect(result.status).toBe('FOUND');
-    expect(result.campaignName).toBe('Wrapped Campaign');
+    expect(result.status).toBe('NOT_FOUND'); // failed detail skipped, not UNKNOWN
   });
 });
 

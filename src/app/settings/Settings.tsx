@@ -645,6 +645,9 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
   }
 
   function handleToggleWorkflow(flowId: string, enabled: boolean) {
+    setConfirmDeleteId(null);
+    setDeleteCheckStatus(null);
+    setDeleteCheckCampaign(null);
     runServerlessFunction({
       name: 'extole_settings',
       parameters: { action: 'toggleWorkflow', flowId, enabled, actor },
@@ -655,10 +658,6 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
   function handleOpenDeleteConfirm(w: WorkflowInfo) {
     setConfirmDeleteId(w.id);
     setDeleteCheckCampaign(null);
-    if (!w.enabled) {
-      setDeleteCheckStatus('NOT_FOUND');
-      return;
-    }
     setDeleteCheckStatus('checking');
     runServerlessFunction({
       name: 'extole_settings',
@@ -916,9 +915,11 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
                       )}
                       {(deleteCheckStatus === 'FOUND' || deleteCheckStatus === 'UNKNOWN') && (
                         <>
-                          <Button onClick={() => handleToggleWorkflow(confirmDeleteId, false)} variant="secondary">
-                            Disable Instead
-                          </Button>
+                          {w?.enabled && (
+                            <Button onClick={() => { handleToggleWorkflow(confirmDeleteId, false); cancel(); }} variant="secondary">
+                              Disable Instead
+                            </Button>
+                          )}
                           <Button onClick={() => handleDeleteWorkflow(confirmDeleteId, w?.name)} variant="destructive">
                             Delete Anyway
                           </Button>

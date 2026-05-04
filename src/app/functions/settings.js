@@ -288,7 +288,14 @@ function buildEnrollmentCriteria(obj, triggerType, triggerProperty, triggerToVal
       listFilterBranch: {
         filterBranchType: 'AND',
         filterBranchOperator: 'AND',
-        filters: [],
+        filters: [{
+          filterType: 'PROPERTY',
+          property: triggerProperty,
+          operation: {
+            operationType: 'ALL_PROPERTY',
+            operator: 'IS_KNOWN',
+          },
+        }],
         filterBranches: [],
       },
     };
@@ -732,19 +739,28 @@ async function handleCheckEventUsage(extoleToken, { eventName }) {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
-    let res;
+    let summaries;
     try {
-      res = await fetch(`${EXTOLE_API_BASE}/v4/campaigns?state=PUBLISHED,ACTIVE`, {
+      const res = await fetch(`${EXTOLE_API_BASE}/v2/campaign-summaries`, {
         headers: { Authorization: `Bearer ${extoleToken}`, ...EXTOLE_APP_TYPE_HEADER },
         signal: controller.signal,
       });
+      if (!res.ok) return { status: 'UNKNOWN', reason: `Extole API ${res.status}` };
+      const data = await res.json();
+      summaries = Array.isArray(data) ? data : [];
     } finally {
       clearTimeout(timeout);
     }
-    if (!res.ok) return { status: 'UNKNOWN', reason: `Extole API ${res.status}` };
-    const data = await res.json();
-    const campaigns = Array.isArray(data) ? data : (data.campaigns || data.results || []);
-    for (const campaign of campaigns) {
+    const active = summaries.filter(c => ['PUBLISHED', 'ACTIVE', 'LIVE'].includes((c.state || '').toUpperCase()));
+    const details = await Promise.all(
+      active.slice(0, 50).map(c =>
+        fetch(`${EXTOLE_API_BASE}/v2/campaigns/${c.campaign_id}`, {
+          headers: { Authorization: `Bearer ${extoleToken}`, ...EXTOLE_APP_TYPE_HEADER },
+        }).then(r => r.ok ? r.json() : null).catch(() => null)
+      )
+    );
+    for (const campaign of details) {
+      if (!campaign) continue;
       if (campaignReferencesEvent(campaign, eventName)) {
         return { status: 'FOUND', campaignName: campaign.name || campaign.campaign_id || 'unknown' };
       }
@@ -774,6 +790,17 @@ function campaignReferencesEvent(campaign, eventName) {
     for (const b of campaign.builds) {
       if (Array.isArray(b.triggers)) {
         for (const t of b.triggers) {
+          if (t.event_name && String(t.event_name).toLowerCase() === name) return true;
+          if (Array.isArray(t.event_names) && t.event_names.some(n => String(n).toLowerCase() === name)) return true;
+        }
+      }
+    }
+  }
+  // Shape 4: campaign.steps[].triggers[].event_names[] (v2 /campaigns/{id} format)
+  if (Array.isArray(campaign.steps)) {
+    for (const step of campaign.steps) {
+      if (Array.isArray(step.triggers)) {
+        for (const t of step.triggers) {
           if (t.event_name && String(t.event_name).toLowerCase() === name) return true;
           if (Array.isArray(t.event_names) && t.event_names.some(n => String(n).toLowerCase() === name)) return true;
         }

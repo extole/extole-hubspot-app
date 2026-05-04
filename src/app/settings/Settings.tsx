@@ -1354,6 +1354,7 @@ function EventForm({
 }) {
   const [propErrors, setPropErrors] = useState<Record<number, boolean>>({});
   const [triggerFieldError, setTriggerFieldError] = useState(false);
+  const [eventNameError, setEventNameError] = useState(false);
   const [objectTypes, setObjectTypes] = useState<ObjectTypeOption[]>([
     { value: 'contact', label: 'Contact', objectTypeId: '0-1' },
     { value: 'deal',    label: 'Deal',    objectTypeId: '0-3' },
@@ -1428,7 +1429,8 @@ function EventForm({
     setPropErrors(prev => ({ ...prev, [index]: !valid }));
   }
 
-  const canSubmit = !!form.eventName.trim() && !creating;
+  const EVENT_NAME_RE = /^[0-9a-zA-Z_\-.]+([0-9a-zA-Z_\-.\s]*[0-9a-zA-Z_\-.])?$/;
+  const canSubmit = !!form.eventName.trim() && !eventNameError && !creating;
 
   return (
     <>
@@ -1436,9 +1438,12 @@ function EventForm({
         label="Event name"
         name="eventName"
         value={form.eventName}
-        onChange={(v) => onChange({ ...form, eventName: v })}
+        onChange={(v) => { onChange({ ...form, eventName: v }); setEventNameError(false); }}
+        onBlur={(v) => { if (v.trim()) setEventNameError(!EVENT_NAME_RE.test(v.trim())); }}
         placeholder="e.g. purchase, referral_sent, account_upgrade"
         description="The exact Extole event name your program expects."
+        error={eventNameError}
+        validationMessage={eventNameError ? 'Use only letters, numbers, underscores, hyphens, and periods' : undefined}
       />
 
       <Select

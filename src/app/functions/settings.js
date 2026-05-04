@@ -13,6 +13,7 @@ const BATCH_SIZE = 50;
 // Workaround: Extole v5 shareables API currently requires a label even though it shouldn't.
 // Set to null once the API is fixed (ticket open). See: exhsappd = extole hubspot app default.
 const DEFAULT_SHARE_LABEL = 'exhsappd';
+const EXTOLE_WORKFLOW_PREFIX = 'Extole — ';
 
 async function testConnection(token) {
   const response = await fetch(`${EXTOLE_API_BASE}/v4/tokens`, {
@@ -195,11 +196,11 @@ async function handleGetWorkflows(hsToken) {
   } while (after);
 
   const extoleWorkflows = allResults
-    .filter(w => w.name && w.name.startsWith('Extole'))
+    .filter(w => w.name && w.name.startsWith(EXTOLE_WORKFLOW_PREFIX))
     .map(w => ({
       id: String(w.id),
       name: w.name,
-      eventName: w.name.replace(/^Extole\s*[—-]\s*/, ''),
+      eventName: w.name.slice(EXTOLE_WORKFLOW_PREFIX.length),
       enabled: w.isEnabled,
       status: w.status || (w.isEnabled ? 'ACTIVE' : 'INACTIVE'),
       objectTypeId: w.objectTypeId || '0-1',
@@ -373,7 +374,7 @@ async function handleCreateWorkflow(hsToken, extoleToken, { eventName, triggerOb
   const sourceCode = buildWorkflowSourceCode(eventName, objConfig.crmPath, fieldMappings, extoleToken, hsToken);
 
   const flow = {
-    name: `Extole — ${eventName}`,
+    name: EXTOLE_WORKFLOW_PREFIX + eventName,
     flowType: 'WORKFLOW',
     isEnabled: enabled !== false,
     objectTypeId: objConfig.objectTypeId,
@@ -397,6 +398,12 @@ async function handleCreateWorkflow(hsToken, extoleToken, { eventName, triggerOb
   const responseData = await res.json().catch(() => ({}));
 
   if (!res.ok) {
+    await writeLogEntry(hsToken, {
+      action: 'workflow_created',
+      actor: actor || '',
+      details: responseData.message || `HTTP ${res.status}`,
+      status: 'error',
+    });
     return { error: responseData.message || `HTTP ${res.status}`, details: responseData };
   }
 
@@ -511,7 +518,7 @@ async function handleUpdateWorkflow(hsToken, extoleToken, { flowId, eventName, t
   );
 
   const putBody = {
-    name: `Extole — ${eventName}`,
+    name: EXTOLE_WORKFLOW_PREFIX + eventName,
     revisionId: existing.revisionId,
     flowType: existing.flowType,
     isEnabled: existing.isEnabled,
@@ -537,6 +544,12 @@ async function handleUpdateWorkflow(hsToken, extoleToken, { flowId, eventName, t
   const responseData = await putRes.json().catch(() => ({}));
 
   if (!putRes.ok) {
+    await writeLogEntry(hsToken, {
+      action: 'workflow_created',
+      actor: '',
+      details: responseData.message || `HTTP ${putRes.status}`,
+      status: 'error',
+    });
     return { error: responseData.message || `HTTP ${putRes.status}`, details: responseData };
   }
 
@@ -736,29 +749,26 @@ async function handleGetCampaigns(extoleToken) {
 async function handleCheckEventUsage(extoleToken, { eventName }) {
   if (!eventName) return { status: 'NOT_FOUND' };
   if (!extoleToken) return { status: 'UNKNOWN', reason: 'EXTOLE_API_TOKEN not configured' };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    let summaries;
-    try {
-      const res = await fetch(`${EXTOLE_API_BASE}/v2/campaign-summaries`, {
-        headers: { Authorization: `Bearer ${extoleToken}`, ...EXTOLE_APP_TYPE_HEADER },
-        signal: controller.signal,
-      });
-      if (!res.ok) return { status: 'UNKNOWN', reason: `Extole API ${res.status}` };
-      const data = await res.json();
-      summaries = Array.isArray(data) ? data : [];
-    } finally {
-      clearTimeout(timeout);
-    }
+    const res = await fetch(`${EXTOLE_API_BASE}/v2/campaign-summaries`, {
+      headers: { Authorization: `Bearer ${extoleToken}`, ...EXTOLE_APP_TYPE_HEADER },
+      signal: controller.signal,
+    });
+    if (!res.ok) return { status: 'UNKNOWN', reason: `Extole API ${res.status}` };
+    const data = await res.json();
+    const summaries = Array.isArray(data) ? data : [];
     const active = summaries.filter(c => ['PUBLISHED', 'ACTIVE', 'LIVE'].includes((c.state || '').toUpperCase()));
     const details = await Promise.all(
-      active.slice(0, 50).map(c =>
+      active.map(c =>
         fetch(`${EXTOLE_API_BASE}/v2/campaigns/${c.campaign_id}`, {
           headers: { Authorization: `Bearer ${extoleToken}`, ...EXTOLE_APP_TYPE_HEADER },
+          signal: controller.signal,
         }).then(r => r.ok ? r.json() : null).catch(() => null)
       )
     );
+    if (controller.signal.aborted) return { status: 'UNKNOWN', reason: 'timeout' };
     for (const campaign of details) {
       if (!campaign) continue;
       if (campaignReferencesEvent(campaign, eventName)) {
@@ -769,6 +779,8 @@ async function handleCheckEventUsage(extoleToken, { eventName }) {
   } catch (e) {
     const reason = e && e.name === 'AbortError' ? 'timeout' : (e && e.message || String(e));
     return { status: 'UNKNOWN', reason };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -949,7 +961,7 @@ async function handleRunShareLinkBackfillBatch(hsToken, extoleToken, { cursor, p
   };
 }
 
-const AUTO_SHARE_LINK_WORKFLOW_NAME = 'Extole — Auto Share Link';
+const AUTO_SHARE_LINK_WORKFLOW_NAME = EXTOLE_WORKFLOW_PREFIX + 'Auto Share Link';
 
 async function handleGetAutoShareLinkStatus(hsToken) {
   let after = null;

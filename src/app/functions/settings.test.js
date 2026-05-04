@@ -380,6 +380,17 @@ describe('campaignReferencesEvent', () => {
     expect(t.campaignReferencesEvent(campaign, 'hubspot_deal_closed_won')).toBe(true);
   });
 
+  it('matches shape 4: campaign.steps[].triggers[].event_names[]', () => {
+    const campaign = { steps: [{ triggers: [{ event_names: ['hubspot_deal_closed_won'] }] }] };
+    expect(t.campaignReferencesEvent(campaign, 'hubspot_deal_closed_won')).toBe(true);
+    expect(t.campaignReferencesEvent(campaign, 'unrelated_event')).toBe(false);
+  });
+
+  it('matches shape 4: campaign.steps[].triggers[].event_name', () => {
+    const campaign = { steps: [{ triggers: [{ event_name: 'account_opened' }] }] };
+    expect(t.campaignReferencesEvent(campaign, 'account_opened')).toBe(true);
+  });
+
   it('returns false when campaign has no event data', () => {
     expect(t.campaignReferencesEvent({ name: 'Empty Campaign' }, 'any_event')).toBe(false);
   });

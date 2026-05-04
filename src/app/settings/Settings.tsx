@@ -602,30 +602,33 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
     setShareLinkBackfillProgress({ created: 0, existing: 0, skipped: 0, errors: 0 });
     let cursor: string | null = null;
     let totalCreated = 0, totalExisting = 0, totalSkipped = 0, totalErrors = 0;
-    while (true) {
-      const res = await runServerlessFunction({
-        name: 'extole_settings',
-        parameters: {
-          action: 'runShareLinkBackfillBatch',
-          cursor,
-          programLabel: selectedProgramLabel,
-          shareLinkProperty: DEFAULT_SHARE_LINK_PROPERTY,
-          actor,
-        },
-        propertiesToSend: [],
-      });
-      const batch = res.response || {};
-      totalCreated += batch.created || 0;
-      totalExisting += batch.existing || 0;
-      totalSkipped += batch.skipped || 0;
-      const batchErrors = batch.errors || [];
-      totalErrors += batchErrors.length;
-      cursor = batch.cursor || null;
-      setShareLinkBackfillProgress({ created: totalCreated, existing: totalExisting, skipped: totalSkipped, errors: totalErrors });
-      if (batch.done || !cursor) break;
+    try {
+      while (true) {
+        const res = await runServerlessFunction({
+          name: 'extole_settings',
+          parameters: {
+            action: 'runShareLinkBackfillBatch',
+            cursor,
+            programLabel: selectedProgramLabel,
+            shareLinkProperty: DEFAULT_SHARE_LINK_PROPERTY,
+            actor,
+          },
+          propertiesToSend: [],
+        });
+        const batch = res.response || {};
+        totalCreated += batch.created || 0;
+        totalExisting += batch.existing || 0;
+        totalSkipped += batch.skipped || 0;
+        const batchErrors = batch.errors || [];
+        totalErrors += batchErrors.length;
+        cursor = batch.cursor || null;
+        setShareLinkBackfillProgress({ created: totalCreated, existing: totalExisting, skipped: totalSkipped, errors: totalErrors });
+        if (batch.done || !cursor) break;
+      }
+      setShareLinkBackfillDone(true);
+    } finally {
+      setShareLinkBackfillRunning(false);
     }
-    setShareLinkBackfillRunning(false);
-    setShareLinkBackfillDone(true);
   }
 
   function handleLoadWorkflows() {
@@ -889,49 +892,20 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
                 </Table>
               )}
 
-              {confirmDeleteId && (() => {
-                const w = sortedWorkflows.find(wf => wf.id === confirmDeleteId);
-                const cancel = () => { setConfirmDeleteId(null); setDeleteCheckStatus(null); setDeleteCheckCampaign(null); };
-                return (
-                  <Flex direction="column" gap="small">
-                    <Text>Delete "{w?.name ?? confirmDeleteId}"?</Text>
-                    {deleteCheckStatus === 'checking' && (
-                      <Text>Checking Extole campaign usage…</Text>
-                    )}
-                    {deleteCheckStatus === 'NOT_FOUND' && (
-                      <Text>This event is not referenced by any active Extole campaigns.</Text>
-                    )}
-                    {deleteCheckStatus === 'FOUND' && (
-                      <Text>This event is used by the active Extole campaign "{deleteCheckCampaign}". Deleting it may break campaign behavior.</Text>
-                    )}
-                    {deleteCheckStatus === 'UNKNOWN' && (
-                      <Text>Could not verify whether this event is in use by Extole campaigns.</Text>
-                    )}
-                    <Flex direction="row" gap="small" align="center">
-                      {(deleteCheckStatus === 'NOT_FOUND') && (
-                        <Button onClick={() => handleDeleteWorkflow(confirmDeleteId, w?.name)} variant="destructive">
-                          Delete
-                        </Button>
-                      )}
-                      {(deleteCheckStatus === 'FOUND' || deleteCheckStatus === 'UNKNOWN') && (
-                        <>
-                          {w?.enabled && (
-                            <Button onClick={() => { handleToggleWorkflow(confirmDeleteId, false); cancel(); }} variant="secondary">
-                              Disable Instead
-                            </Button>
-                          )}
-                          <Button onClick={() => handleDeleteWorkflow(confirmDeleteId, w?.name)} variant="destructive">
-                            Delete Anyway
-                          </Button>
-                        </>
-                      )}
-                      <Button onClick={cancel} variant="secondary">
-                        Cancel
-                      </Button>
-                    </Flex>
-                  </Flex>
-                );
-              })()}
+              {confirmDeleteId && (
+                <DeleteConfirmPanel
+                  workflow={sortedWorkflows.find(wf => wf.id === confirmDeleteId)}
+                  confirmDeleteId={confirmDeleteId}
+                  checkStatus={deleteCheckStatus}
+                  campaignName={deleteCheckCampaign}
+                  onDelete={(id, name) => handleDeleteWorkflow(id, name)}
+                  onDisable={(id) => {
+                    handleToggleWorkflow(id, false);
+                    setConfirmDeleteId(null); setDeleteCheckStatus(null); setDeleteCheckCampaign(null);
+                  }}
+                  onCancel={() => { setConfirmDeleteId(null); setDeleteCheckStatus(null); setDeleteCheckCampaign(null); }}
+                />
+              )}
 
               {!showEventForm ? (
                 <>
@@ -1231,11 +1205,10 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
           {shareLinkBackfillRunning && <LoadingSpinner label="Generating share links..." showLabel />}
 
           {shareLinkBackfillProgress && (
-            <>
-              <Text>
-                Created: {shareLinkBackfillProgress.created} | Already had link: {shareLinkBackfillProgress.existing} | Skipped: {shareLinkBackfillProgress.skipped} | Errors: {shareLinkBackfillProgress.errors}
-              </Text>
-            </>
+            <Text>
+              Created: {shareLinkBackfillProgress.created} | Already had link: {shareLinkBackfillProgress.existing} | Skipped: {shareLinkBackfillProgress.skipped} | Errors: {shareLinkBackfillProgress.errors}
+              {shareLinkBackfillProgress.errors > 0 && ' (see Settings Log for details)'}
+            </Text>
           )}
 
           {shareLinkBackfillDone && <Text>Share link generation complete.</Text>}
@@ -1305,6 +1278,52 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
 
       </>)}
     </Form>
+  );
+}
+
+// ─── Delete Confirm Panel ─────────────────────────────────────────────────────
+
+function DeleteConfirmPanel({
+  workflow,
+  confirmDeleteId,
+  checkStatus,
+  campaignName,
+  onDelete,
+  onDisable,
+  onCancel,
+}: {
+  workflow: WorkflowInfo | undefined;
+  confirmDeleteId: string;
+  checkStatus: 'checking' | 'NOT_FOUND' | 'FOUND' | 'UNKNOWN' | null;
+  campaignName: string | null;
+  onDelete: (id: string, name?: string) => void;
+  onDisable: (id: string) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Flex direction="column" gap="small">
+      <Text>Delete "{workflow?.name ?? confirmDeleteId}"?</Text>
+      {checkStatus === 'checking' && <Text>Checking Extole campaign usage…</Text>}
+      {checkStatus === 'NOT_FOUND' && <Text>This event is not referenced by any active Extole campaigns.</Text>}
+      {checkStatus === 'FOUND' && (
+        <Text>This event is used by the active Extole campaign "{campaignName}". Deleting it may break campaign behavior.</Text>
+      )}
+      {checkStatus === 'UNKNOWN' && <Text>Could not verify whether this event is in use by Extole campaigns.</Text>}
+      <Flex direction="row" gap="small" align="center">
+        {checkStatus === 'NOT_FOUND' && (
+          <Button onClick={() => onDelete(confirmDeleteId, workflow?.name)} variant="destructive">Delete</Button>
+        )}
+        {(checkStatus === 'FOUND' || checkStatus === 'UNKNOWN') && (
+          <>
+            {workflow?.enabled && (
+              <Button onClick={() => onDisable(confirmDeleteId)} variant="secondary">Disable Instead</Button>
+            )}
+            <Button onClick={() => onDelete(confirmDeleteId, workflow?.name)} variant="destructive">Delete Anyway</Button>
+          </>
+        )}
+        <Button onClick={onCancel} variant="secondary">Cancel</Button>
+      </Flex>
+    </Flex>
   );
 }
 

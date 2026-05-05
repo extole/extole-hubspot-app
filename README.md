@@ -9,7 +9,22 @@ A HubSpot UI Extension that connects HubSpot to Extole's offer platform. It clos
 ### Configure Events
 Define record-triggered events that fire to Extole when HubSpot records change. The app registers a Custom Workflow Action — admins create the workflow trigger in HubSpot's workflow builder; this app provides the action step that calls Extole with the configured event name and properties.
 
-Supports Contact, Deal, and other object types. Properties can be mapped from any HubSpot field.
+Supports Contact, Deal, Company, Ticket, and custom object types. Properties can be mapped from any HubSpot field using a property dropdown populated from HubSpot's CRM API.
+
+**Trigger types:**
+- **Record Created** — fires when a new record is created
+- **Field Changed** — fires whenever a specific property changes (re-enrolling)
+- **Field Value** — fires when a property reaches a specific value (e.g. Deal Stage = Closed Won)
+
+**Field mappings:** Each mapping sends a HubSpot property value (or a static string) to Extole under a configurable key. Property values are selected from a dropdown; empty/null values are omitted from the event payload.
+
+**Include associated contact data** *(non-contact objects only, on by default)*: When enabled, the workflow fetches the primary associated contact and merges their email, name, and advocate code into the event payload. This is the recommended approach for deal-triggered events — it provides both the deal's own data (e.g. `amount`, `dealstage`) and the contact's identity and referral attribution in a single event. Only non-empty values are merged; existing mapped values are not overwritten.
+
+**Event name validation:** The event name is validated on blur against Extole's allowed character set (`[0-9a-zA-Z_\-.\s]`). The submit button is blocked until the name is valid.
+
+**Workflow errors** appear in the Settings Log tab so failures are visible and auditable.
+
+**Campaign usage check on delete:** Before deleting a workflow, the app checks whether its event name is referenced by any active Extole campaign. If a match is found, a warning is shown with the option to disable instead of delete.
 
 ### Manage Advocate Codes
 Generates a JavaScript snippet to embed on the client's site. When a friend arrives via an advocate's share link, the snippet:
@@ -28,6 +43,20 @@ Automatically generates Extole share links for contacts and writes them back to 
 - **Auto-generate on create:** Creates a share link when a new contact is enrolled.
 - **Backfill:** Generates share links for existing contacts in bulk.
 - **Campaign targeting:** Optionally scope share links to a specific Extole program/campaign.
+
+---
+
+## Deal Attribution Flow
+
+A common use case: a friend is referred, creates a HubSpot Deal, and the deal closes (Closed Won). Extole needs the contact's advocate code to issue referral rewards to the original advocate.
+
+The recommended setup:
+
+1. Create a workflow on the **Deal** object, trigger **Field Value** → `dealstage = closedwon`.
+2. Enable **Include associated contact data** (default on).
+3. Map `amount` → `deal_amount` (or similar) in field mappings.
+
+At runtime, the workflow code fetches the primary associated contact and merges `email`, `firstname`/`lastname`, and `extole_advocate_code` into the Extole event alongside the deal properties. Extole uses the advocate code to credit the referring advocate. Empty advocate codes are omitted — the event still fires, it just won't trigger a referral reward.
 
 ---
 

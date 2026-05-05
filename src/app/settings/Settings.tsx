@@ -49,6 +49,7 @@ type EventFormState = {
   triggerProperty: string;
   triggerToValue: string;
   fieldMappings: FieldMapping[];
+  includeContactData: boolean;
 };
 
 type ObjectTypeOption = { value: string; label: string; objectTypeId: string };
@@ -169,6 +170,7 @@ const BLANK_EVENT_FORM: EventFormState = {
   triggerProperty: '',
   triggerToValue: '',
   fieldMappings: [...CONTACT_DEFAULTS],
+  includeContactData: true,
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -707,6 +709,7 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
         triggerProperty: cfg?.triggerProperty ?? '',
         triggerToValue: cfg?.triggerToValue ?? '',
         fieldMappings: cfg?.fieldMappings ?? [...CONTACT_DEFAULTS],
+        includeContactData: cfg?.includeContactData ?? true,
       });
       setCreateResult('');
     }).catch(() => {
@@ -735,6 +738,7 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
         triggerProperty: eventForm.triggerProperty || undefined,
         triggerToValue: eventForm.triggerToValue || undefined,
         fieldMappings: eventForm.fieldMappings,
+        includeContactData: eventForm.includeContactData,
         enabled,
         actor,
       },
@@ -766,6 +770,7 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
         triggerProperty: eventForm.triggerProperty || undefined,
         triggerToValue: eventForm.triggerToValue || undefined,
         fieldMappings: eventForm.fieldMappings,
+        includeContactData: eventForm.includeContactData,
       },
       propertiesToSend: [],
     }).then((res) => {
@@ -1537,6 +1542,19 @@ function EventForm({
           </>
         );
       })()}
+
+      {form.triggerObject !== 'contact' && (
+        <>
+          <Divider />
+          <Toggle
+            name="includeContactData"
+            label="Include associated contact data"
+            checked={form.includeContactData}
+            onChange={(val) => onChange({ ...form, includeContactData: val })}
+          />
+          <Text>When enabled, the event payload will include the primary associated contact's email, name, and advocate code.</Text>
+        </>
+      )}
 
       <Divider />
       <Text format={{ fontWeight: 'bold' }}>Field Mappings</Text>

@@ -365,13 +365,13 @@ function parseTriggerConfig(enrollmentCriteria) {
   return { triggerType: 'RECORD_CREATED' };
 }
 
-async function handleCreateWorkflow(hsToken, extoleToken, { eventName, triggerObject, triggerType, triggerProperty, triggerToValue, fieldMappings, enabled, actor }) {
+async function handleCreateWorkflow(hsToken, extoleToken, { eventName, triggerObject, triggerType, triggerProperty, triggerToValue, fieldMappings, enabled, actor, includeContactData }) {
   if (!extoleToken) return { error: 'EXTOLE_API_TOKEN secret not configured' };
   if (!eventName) return { error: 'eventName is required' };
 
   const obj = triggerObject || 'contact';
   const objConfig = getObjConfig(obj);
-  const sourceCode = buildWorkflowSourceCode(eventName, objConfig.crmPath, fieldMappings, extoleToken, hsToken);
+  const sourceCode = buildWorkflowSourceCode(eventName, objConfig.crmPath, fieldMappings, extoleToken, hsToken, includeContactData !== false);
 
   const flow = {
     name: EXTOLE_WORKFLOW_PREFIX + eventName,
@@ -490,14 +490,14 @@ async function handleGetWorkflowConfig(hsToken, { flowId }) {
   return { config: config ? { ...config, ...triggerConfig } : null };
 }
 
-async function handleUpdateWorkflow(hsToken, extoleToken, { flowId, eventName, triggerObject, triggerType, triggerProperty, triggerToValue, fieldMappings }) {
+async function handleUpdateWorkflow(hsToken, extoleToken, { flowId, eventName, triggerObject, triggerType, triggerProperty, triggerToValue, fieldMappings, includeContactData }) {
   if (!extoleToken) return { error: 'EXTOLE_API_TOKEN secret not configured' };
   if (!flowId) return { error: 'flowId is required' };
   if (!eventName) return { error: 'eventName is required' };
 
   const obj = triggerObject || 'contact';
   const objConfig = getObjConfig(obj);
-  const sourceCode = buildWorkflowSourceCode(eventName, objConfig.crmPath, fieldMappings, extoleToken, hsToken);
+  const sourceCode = buildWorkflowSourceCode(eventName, objConfig.crmPath, fieldMappings, extoleToken, hsToken, includeContactData !== false);
 
   // GET current flow to preserve mutable fields not included in the edit form
   const getRes = await fetch(`https://api.hubapi.com/automation/v4/flows/${flowId}`, {
@@ -633,18 +633,46 @@ function parseWorkflowConfig(sourceCode) {
     const crmType = sourceCode.match(/const CRM_TYPE = '([^']+)'/)?.[1];
     const mappingsMatch = sourceCode.match(/const FIELD_MAPPINGS = (\[[\s\S]*?\]);/);
     const fieldMappings = mappingsMatch ? JSON.parse(mappingsMatch[1]) : [];
+    const includeContactDataMatch = sourceCode.match(/const INCLUDE_CONTACT_DATA = (true|false)/);
+    const includeContactData = includeContactDataMatch ? includeContactDataMatch[1] === 'true' : true;
     if (!eventName) return null;
     // Reverse-map CRM path back to trigger object key
     const crmPathToKey = { contacts: 'contact', deals: 'deal', companies: 'company', tickets: 'ticket', quotes: 'quote' };
-    const triggerObject = crmPathToKey[crmType] || crmType; // custom objects: crmType IS the objectTypeId
-    return { eventName, triggerObject, fieldMappings };
+    const triggerObject = crmPathToKey[crmType] || crmType;
+    return { eventName, triggerObject, fieldMappings, includeContactData };
   } catch {
     return null;
   }
 }
 
-function buildWorkflowSourceCode(eventName, crmObjectType, fieldMappings, extoleToken, hsToken) {
+function buildWorkflowSourceCode(eventName, crmObjectType, fieldMappings, extoleToken, hsToken, includeContactData) {
   const escape = (s) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '');
+  const addContactLookup = includeContactData && crmObjectType !== 'contacts';
+
+  const contactLookupCode = !addContactLookup ? '' : `
+  // Look up primary associated contact and merge their identity into the event
+  const assocRes = await fetch(
+    'https://api.hubapi.com/crm/v4/objects/' + CRM_TYPE + '/' + objectId + '/associations/contacts',
+    { headers: { Authorization: 'Bearer ' + HS_TOKEN } }
+  );
+  if (assocRes.ok) {
+    const assocBody = await assocRes.json().catch(() => ({}));
+    const results = assocBody.results || [];
+    const primary = results.find(r => r.associationTypes && r.associationTypes.some(t => t.label === 'Primary')) || results[0];
+    if (primary) {
+      const contactRes = await fetch(
+        'https://api.hubapi.com/crm/v3/objects/contacts/' + primary.toObjectId + '?properties=email,firstname,lastname,extole_advocate_code',
+        { headers: { Authorization: 'Bearer ' + HS_TOKEN } }
+      );
+      if (contactRes.ok) {
+        const cp = (await contactRes.json().catch(() => ({}))).properties || {};
+        if (cp.email && !data.email) data.email = cp.email;
+        if (cp.firstname && !data.first_name) data.first_name = cp.firstname;
+        if (cp.lastname && !data.last_name) data.last_name = cp.lastname;
+        if (cp.extole_advocate_code && !data.advocate_code) data.advocate_code = cp.extole_advocate_code;
+      }
+    }
+  }`;
 
   return `
 const EVENT_NAME = '${escape(eventName)}';
@@ -652,6 +680,7 @@ const CRM_TYPE = '${crmObjectType}';
 const FIELD_MAPPINGS = ${JSON.stringify(fieldMappings || [])};
 const EXTOLE_TOKEN = '${escape(extoleToken || '')}';
 const HS_TOKEN = '${escape(hsToken || '')}';
+const INCLUDE_CONTACT_DATA = ${addContactLookup ? 'true' : 'false'};
 
 exports.main = async (event) => {
   const objectId = event.object.objectId;
@@ -678,7 +707,7 @@ exports.main = async (event) => {
     const value = m.source === 'static' ? m.value : props[m.value];
     if (value != null && value !== '') data[m.extoleKey] = value;
   }
-
+${contactLookupCode}
   // Fire event to Extole
   const extoleRes = await fetch('https://api.extole.io/v5/events', {
     method: 'POST',

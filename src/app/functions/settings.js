@@ -196,7 +196,7 @@ async function handleGetWorkflows(hsToken) {
   } while (after);
 
   const extoleWorkflows = allResults
-    .filter(w => w.name && w.name.startsWith(EXTOLE_WORKFLOW_PREFIX) && w.name !== AUTO_SHARE_LINK_WORKFLOW_NAME)
+    .filter(w => w.name && w.name.startsWith(EXTOLE_WORKFLOW_PREFIX))
     .map(w => ({
       id: String(w.id),
       name: w.name,

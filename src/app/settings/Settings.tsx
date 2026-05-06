@@ -861,7 +861,7 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
                   <TableBody>
                     {sortedWorkflows.map((w) => (
                       <TableRow key={w.id}>
-                        <TableCell>{w.eventName}</TableCell>
+                        <TableCell>{w.eventName === 'Auto Share Link' ? 'Share Link Workflow' : w.eventName}</TableCell>
                         <TableCell>
                           {OBJECT_TYPE_LABELS[w.objectTypeId ?? ''] ?? w.objectTypeId ?? 'Unknown'}
                         </TableCell>

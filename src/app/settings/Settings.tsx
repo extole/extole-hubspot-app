@@ -842,7 +842,7 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
                       <TableHeader
                         sortDirection={sortCol === 'name' ? sortDir : 'none'}
                         onSortChange={(dir) => { setSortCol('name'); setSortDir(dir as 'ascending' | 'descending'); }}
-                      >Extole Event</TableHeader>
+                      >Event Name</TableHeader>
                       <TableHeader
                         sortDirection={sortCol === 'object' ? sortDir : 'none'}
                         onSortChange={(dir) => { setSortCol('object'); setSortDir(dir as 'ascending' | 'descending'); }}

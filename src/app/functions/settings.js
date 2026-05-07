@@ -1281,30 +1281,39 @@ const ADVOCATE_SYNC_ENDPOINT_PATH = '/api/advocate-sync';
 async function handleGetAdvocateSyncConfig(hsToken) {
   const result = await handleGetAppSettings(hsToken);
   const s = result.settings || {};
-  const autoWebhookUrl = await constructAdvocateSyncWebhookUrl(hsToken);
+  const construction = await constructAdvocateSyncWebhookUrl(hsToken);
   return {
     enabled: !!s.advocateSyncEnabled,
     secret: s.advocateSyncSecret || '',
     rotatedAt: s.advocateSyncSecretRotatedAt || null,
     endpointPath: ADVOCATE_SYNC_ENDPOINT_PATH,
-    webhookUrl: s.advocateSyncWebhookUrl || autoWebhookUrl || '',
-    autoWebhookUrl: autoWebhookUrl || '',
+    webhookUrl: s.advocateSyncWebhookUrl || construction.url || '',
+    autoWebhookUrl: construction.url || '',
+    _debug: construction.debug,
   };
 }
 
-// Construct the public URL by reading the portal's connected primary domain.
-// Pattern: https://<connected-domain>/hs/serverless/<endpoint.path>
+// Construct the public URL from the portal's account info.
+// Pattern: https://<portalId>.hs-sites-<region>.com/hs/serverless/<endpoint.path>
 async function constructAdvocateSyncWebhookUrl(hsToken) {
   try {
-    const res = await hsGet(hsToken, '/cms/v3/domains');
-    if (!res.ok) return '';
+    const res = await hsGet(hsToken, '/account-info/v3/details');
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '');
+      return { url: '', debug: { step: 'account-info', status: res.status, body: errBody.slice(0, 500) } };
+    }
     const data = await res.json();
-    const domains = Array.isArray(data?.results) ? data.results : [];
-    const primary = domains.find(d => d.isPrimaryLandingPage) || domains[0];
-    if (!primary?.domain) return '';
-    return `https://${primary.domain}/hs/serverless${ADVOCATE_SYNC_ENDPOINT_PATH}`;
-  } catch {
-    return '';
+    const portalId = data?.portalId;
+    const region = data?.dataHostingLocation;
+    if (!portalId || !region) {
+      return { url: '', debug: { step: 'missing-fields', portalId, region } };
+    }
+    return {
+      url: `https://${portalId}.hs-sites-${region}.com/hs/serverless${ADVOCATE_SYNC_ENDPOINT_PATH}`,
+      debug: null,
+    };
+  } catch (e) {
+    return { url: '', debug: { step: 'exception', message: String(e && e.message || e) } };
   }
 }
 

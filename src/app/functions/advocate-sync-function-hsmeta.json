@@ -1,0 +1,12 @@
+{
+  "uid": "extole_advocate_sync",
+  "type": "app-function",
+  "config": {
+    "entrypoint": "/app/functions/advocate-sync.js",
+    "endpoint": {
+      "path": "/api/advocate-sync",
+      "methods": ["POST"]
+    },
+    "secretKeys": []
+  }
+}

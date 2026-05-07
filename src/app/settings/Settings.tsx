@@ -126,6 +126,10 @@ const LOG_ACTION_LABELS: Record<string, string> = {
   workflow_created:              'Workflow Created',
   workflow_deleted:              'Workflow Deleted',
   workflow_toggled:              'Workflow Toggled',
+  advocate_sync:                 'Advocate Sync',
+  advocate_sync_enabled:         'Advocate Sync Enabled',
+  advocate_sync_disabled:        'Advocate Sync Disabled',
+  advocate_sync_secret_rotated:  'Advocate Sync Secret Rotated',
 };
 
 const COMMON_PROPERTIES: Record<string, { value: string; label: string }[]> = {
@@ -210,7 +214,7 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
   const [deleteCheckCampaign, setDeleteCheckCampaign] = useState<string | null>(null);
 
   // ── Navigation ──
-  type NavTab = 'events' | 'forms' | 'sharelinks' | 'log';
+  type NavTab = 'events' | 'forms' | 'sharelinks' | 'sync' | 'log';
   const [activeTab, setActiveTab] = useState<NavTab>('events');
 
   // Workflow table sort
@@ -233,6 +237,15 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
   const [autoShareLoading, setAutoShareLoading] = useState(false);
   const [autoShareProgramLabel, setAutoShareProgramLabel] = useState('');
   const [autoShareError, setAutoShareError] = useState<string | null>(null);
+
+  // ── Advocate Sync (anonymous webhook) ──
+  const [advocateSyncEnabled, setAdvocateSyncEnabled] = useState<boolean | null>(null);
+  const [advocateSyncSecret, setAdvocateSyncSecret] = useState<string>('');
+  const [advocateSyncRotatedAt, setAdvocateSyncRotatedAt] = useState<string | null>(null);
+  const [advocateSyncEndpointPath, setAdvocateSyncEndpointPath] = useState<string>('/api/advocate-sync');
+  const [advocateSyncLoading, setAdvocateSyncLoading] = useState(false);
+  const [advocateSyncError, setAdvocateSyncError] = useState<string | null>(null);
+  const [advocateSyncSecretRevealed, setAdvocateSyncSecretRevealed] = useState(false);
 
   // ── Activity Log ──
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
@@ -441,6 +454,68 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
     setLogPageStack([]);
     fetchLogPage();
   }, [activeTab]);
+
+  // Load advocate sync config when sync tab is first opened
+  useEffect(() => {
+    if (activeTab !== 'sync') return;
+    if (advocateSyncEnabled !== null || advocateSyncLoading) return;
+    setAdvocateSyncLoading(true);
+    setAdvocateSyncError(null);
+    runServerlessFunction({
+      name: 'extole_settings',
+      parameters: { action: 'getAdvocateSyncConfig' },
+      propertiesToSend: [],
+    }).then((res: any) => {
+      const r = res?.response;
+      if (r?.error) { setAdvocateSyncError(r.error); return; }
+      setAdvocateSyncEnabled(!!r?.enabled);
+      setAdvocateSyncSecret(r?.secret || '');
+      setAdvocateSyncRotatedAt(r?.rotatedAt || null);
+      if (r?.endpointPath) setAdvocateSyncEndpointPath(r.endpointPath);
+    }).catch(() => {
+      setAdvocateSyncError('Failed to load advocate sync config');
+    }).finally(() => {
+      setAdvocateSyncLoading(false);
+    });
+  }, [activeTab]);
+
+  async function handleToggleAdvocateSync() {
+    setAdvocateSyncLoading(true);
+    setAdvocateSyncError(null);
+    try {
+      const res: any = await runServerlessFunction({
+        name: 'extole_settings',
+        parameters: { action: 'setAdvocateSyncEnabled', enabled: !advocateSyncEnabled, actor },
+        propertiesToSend: [],
+      });
+      const r = res?.response;
+      if (r?.error) { setAdvocateSyncError(r.error); return; }
+      setAdvocateSyncEnabled(!!r?.enabled);
+      setAdvocateSyncSecret(r?.secret || '');
+      setAdvocateSyncRotatedAt(r?.rotatedAt || null);
+    } finally {
+      setAdvocateSyncLoading(false);
+    }
+  }
+
+  async function handleRegenerateAdvocateSyncSecret() {
+    setAdvocateSyncLoading(true);
+    setAdvocateSyncError(null);
+    try {
+      const res: any = await runServerlessFunction({
+        name: 'extole_settings',
+        parameters: { action: 'regenerateAdvocateSyncSecret', actor },
+        propertiesToSend: [],
+      });
+      const r = res?.response;
+      if (r?.error) { setAdvocateSyncError(r.error); return; }
+      setAdvocateSyncSecret(r?.secret || '');
+      setAdvocateSyncRotatedAt(r?.rotatedAt || null);
+      setAdvocateSyncSecretRevealed(true);
+    } finally {
+      setAdvocateSyncLoading(false);
+    }
+  }
 
   function handleLogNextPage() {
     if (!logNextAfter) return;
@@ -794,6 +869,7 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
         <Button variant={activeTab === 'events' ? undefined : 'transparent'} onClick={() => setActiveTab('events')}>Configure Events</Button>
         <Button variant={activeTab === 'forms' ? undefined : 'transparent'} onClick={() => setActiveTab('forms')}>Manage Advocate Codes</Button>
         <Button variant={activeTab === 'sharelinks' ? undefined : 'transparent'} onClick={() => setActiveTab('sharelinks')}>Manage Share Links</Button>
+        <Button variant={activeTab === 'sync' ? undefined : 'transparent'} onClick={() => setActiveTab('sync')}>Advocate Sync</Button>
         <Button variant={activeTab === 'log' ? undefined : 'transparent'} onClick={() => setActiveTab('log')}>Settings Log</Button>
       </Flex>
       <Divider />
@@ -1217,6 +1293,90 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
           )}
 
           {shareLinkBackfillDone && <Text>Share link generation complete.</Text>}
+
+      </>)}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          SECTION 4b — ADVOCATE SYNC (anonymous webhook)
+      ══════════════════════════════════════════════════════════════════ */}
+      {activeTab === 'sync' && (<>
+
+          <Heading>Advocate Sync</Heading>
+          <Text>
+            Receive advocates from Extole and create matching HubSpot contacts.
+            When an anonymous advocate identifies themselves in an Extole share experience
+            (provides email, gets a share link), Extole calls a webhook here that upserts
+            the contact and writes the share link.
+          </Text>
+          <Spacer />
+
+          {advocateSyncError && <Text format={{ color: 'destructive' }}>{advocateSyncError}</Text>}
+
+          {advocateSyncEnabled === null ? (
+            <LoadingSpinner label="Loading..." showLabel />
+          ) : (
+            <Toggle
+              name="advocateSyncEnabled"
+              label={advocateSyncEnabled ? 'Enabled' : 'Disabled'}
+              checked={!!advocateSyncEnabled}
+              onChange={() => handleToggleAdvocateSync()}
+              disabled={advocateSyncLoading}
+            />
+          )}
+          <Spacer />
+
+          {advocateSyncEnabled && (
+            <>
+              <Divider />
+              <Heading>Webhook configuration</Heading>
+              <Text>
+                Paste these values into the Extole HubSpot integration component.
+                The webhook URL is unique to your HubSpot portal.
+              </Text>
+              <Spacer />
+
+              <Text format={{ fontWeight: 'bold' }}>Webhook path</Text>
+              <Input
+                name="advocateSyncEndpointPath"
+                label=""
+                value={advocateSyncEndpointPath}
+                readOnly
+                tooltip="Append this path to your HubSpot app's serverless function base URL. Find your full URL on the deployed app's installation page in HubSpot."
+              />
+              <Spacer />
+
+              <Text format={{ fontWeight: 'bold' }}>Shared secret</Text>
+              <Flex direction="row" gap="small" align="end">
+                <Input
+                  name="advocateSyncSecret"
+                  label=""
+                  value={advocateSyncSecretRevealed ? advocateSyncSecret : (advocateSyncSecret ? '••••••••••••••••••••••••••••••••' : '')}
+                  readOnly
+                />
+                <Button onClick={() => setAdvocateSyncSecretRevealed(v => !v)} variant="secondary">
+                  {advocateSyncSecretRevealed ? 'Hide' : 'Show'}
+                </Button>
+                <Button
+                  onClick={() => handleRegenerateAdvocateSyncSecret()}
+                  variant="destructive"
+                  disabled={advocateSyncLoading}
+                >
+                  Regenerate
+                </Button>
+              </Flex>
+              {advocateSyncRotatedAt && (
+                <Text format={{ color: 'medium' }}>Last rotated: {formatDate(advocateSyncRotatedAt, locale)}</Text>
+              )}
+              <Spacer />
+
+              <Text format={{ fontWeight: 'bold' }}>Regenerating breaks the integration</Text>
+              <Text>
+                Regenerating the secret immediately invalidates the current value.
+                Update the Extole integration component with the new secret right after
+                regenerating, or webhook calls from Extole will fail.
+              </Text>
+            </>
+          )}
 
       </>)}
 

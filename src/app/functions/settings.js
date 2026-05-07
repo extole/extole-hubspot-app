@@ -92,6 +92,15 @@ exports.main = async (context) => {
     case 'toggleAutoShareLink':
       return handleToggleAutoShareLink(hsToken, extoleToken, params);
 
+    case 'getAdvocateSyncConfig':
+      return handleGetAdvocateSyncConfig(hsToken);
+
+    case 'regenerateAdvocateSyncSecret':
+      return handleRegenerateAdvocateSyncSecret(hsToken, params);
+
+    case 'setAdvocateSyncEnabled':
+      return handleSetAdvocateSyncEnabled(hsToken, params);
+
     case 'createLogSchema':
       return handleCreateLogSchema(hsToken);
 
@@ -1160,6 +1169,9 @@ function getDefaultAppSettings() {
     includeAdvocateCode: true,
     formTargeting: 'all',
     selectedFormIds: [],
+    advocateSyncEnabled: false,
+    advocateSyncSecret: '',
+    advocateSyncSecretRotatedAt: null,
   };
 }
 
@@ -1258,6 +1270,72 @@ async function handleSaveAppSettings(hsToken, { settings }) {
   return { saved: true, updatedAt: now };
 }
 
+// ─── Advocate Sync (anonymous advocate webhook) ──────────────────────────────
+
+const ADVOCATE_SYNC_ENDPOINT_PATH = '/api/advocate-sync';
+
+async function handleGetAdvocateSyncConfig(hsToken) {
+  const result = await handleGetAppSettings(hsToken);
+  const s = result.settings || {};
+  return {
+    enabled: !!s.advocateSyncEnabled,
+    secret: s.advocateSyncSecret || '',
+    rotatedAt: s.advocateSyncSecretRotatedAt || null,
+    endpointPath: ADVOCATE_SYNC_ENDPOINT_PATH,
+  };
+}
+
+async function handleRegenerateAdvocateSyncSecret(hsToken, { actor }) {
+  const result = await handleGetAppSettings(hsToken);
+  const settings = { ...(result.settings || {}) };
+  const newSecret = generateSharedSecret();
+  settings.advocateSyncSecret = newSecret;
+  settings.advocateSyncSecretRotatedAt = new Date().toISOString();
+  const saveRes = await handleSaveAppSettings(hsToken, { settings });
+  if (saveRes.error) return { error: saveRes.error };
+  await writeLogEntry(hsToken, {
+    action: 'advocate_sync_secret_rotated',
+    actor: actor || '',
+    details: '',
+    status: 'success',
+  });
+  return { secret: newSecret, rotatedAt: settings.advocateSyncSecretRotatedAt };
+}
+
+async function handleSetAdvocateSyncEnabled(hsToken, { enabled, actor }) {
+  const result = await handleGetAppSettings(hsToken);
+  const settings = { ...(result.settings || {}) };
+  settings.advocateSyncEnabled = !!enabled;
+  if (enabled && !settings.advocateSyncSecret) {
+    settings.advocateSyncSecret = generateSharedSecret();
+    settings.advocateSyncSecretRotatedAt = new Date().toISOString();
+  }
+  const saveRes = await handleSaveAppSettings(hsToken, { settings });
+  if (saveRes.error) return { error: saveRes.error };
+  await writeLogEntry(hsToken, {
+    action: enabled ? 'advocate_sync_enabled' : 'advocate_sync_disabled',
+    actor: actor || '',
+    details: '',
+    status: 'success',
+  });
+  return {
+    enabled: settings.advocateSyncEnabled,
+    secret: settings.advocateSyncSecret || '',
+    rotatedAt: settings.advocateSyncSecretRotatedAt || null,
+  };
+}
+
+function generateSharedSecret() {
+  // 32 bytes of random hex = 64 chars, sufficient entropy for a shared secret
+  const bytes = new Uint8Array(32);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
 // ─── Activity Log ─────────────────────────────────────────────────────────────
 
 const LOG_OBJECT_NAME = 'extole_app_log';
@@ -1308,6 +1386,10 @@ async function handleCreateLogSchema(hsToken) {
           { label: 'Workflow Created', value: 'workflow_created', hidden: false, displayOrder: 4 },
           { label: 'Workflow Deleted', value: 'workflow_deleted', hidden: false, displayOrder: 5 },
           { label: 'Workflow Toggled', value: 'workflow_toggled', hidden: false, displayOrder: 6 },
+          { label: 'Advocate Sync', value: 'advocate_sync', hidden: false, displayOrder: 7 },
+          { label: 'Advocate Sync Enabled', value: 'advocate_sync_enabled', hidden: false, displayOrder: 8 },
+          { label: 'Advocate Sync Disabled', value: 'advocate_sync_disabled', hidden: false, displayOrder: 9 },
+          { label: 'Advocate Sync Secret Rotated', value: 'advocate_sync_secret_rotated', hidden: false, displayOrder: 10 },
         ],
       },
       {

@@ -44,6 +44,14 @@ Automatically generates Extole share links for contacts and writes them back to 
 - **Backfill:** Generates share links for existing contacts in bulk.
 - **Campaign targeting:** Optionally scope share links to a specific Extole program/campaign.
 
+#### Anonymous Advocate Sync
+Reverse-direction flow: when an anonymous advocate provides their email in an Extole share experience (i.e. they're not yet a HubSpot contact), Extole calls a webhook here that upserts the matching HubSpot contact and writes their share link + advocate code.
+
+- **Public endpoint** at `/api/advocate-sync` on the deployed app (URL is auto-discovered from `/account-info/v3/details` and shown in the Settings page for the admin to copy).
+- **Auth via shared secret** in the request body — HubSpot's serverless gateway strips custom request headers, so the secret travels as `shared_secret` in the JSON payload.
+- **Regenerate** rotates the secret immediately; the Extole integration component must be updated with the new value.
+- **Toggle** in the Anonymous Advocate Sync section enables/disables the sync without deleting the secret.
+
 ---
 
 ## Deal Attribution Flow
@@ -106,12 +114,13 @@ The `PRIVATE_APP_ACCESS_TOKEN` used for HubSpot CRM API calls is injected automa
 ```
 src/
   app/
-    cards/          # CRM card UI extensions (shown on Contact/Deal records)
-    settings/       # Settings page UI extension
+    cards/                # CRM card UI extensions (shown on Contact/Deal records)
+    settings/             # Settings page UI extension
     functions/
-      settings.js   # Serverless function backing the Settings page
-      dispatch.js   # Serverless function for workflow action dispatches
-      extole.js     # Extole API client (shared utility)
-install.md          # Installation walkthrough
-ARCHITECTURE.md     # Technical architecture overview
+      settings.js         # Serverless function backing the Settings page (private)
+      dispatch.js         # Serverless function for workflow action dispatches (private)
+      advocate-sync.js    # Public endpoint function — webhook receiver for Extole → HubSpot sync
+      extole.js           # Extole API client (shared utility)
+install.md                # Installation walkthrough
+ARCHITECTURE.md           # Technical architecture overview
 ```

@@ -5,12 +5,14 @@
  * (provides email, gets a share link). Upserts a HubSpot contact by email and
  * writes the share link / advocate code to the configured contact properties.
  *
- * Auth: shared secret in `x-extole-shared-secret` header, validated against the
- * value stored in the app settings record. Rotating the secret in HubSpot
- * Settings invalidates old requests immediately.
+ * Auth: shared secret in the request body as `shared_secret`, validated against
+ * the value stored in app settings. Rotating the secret in HubSpot Settings
+ * invalidates old requests immediately. (Custom headers are stripped by
+ * HubSpot's serverless gateway, so secrets travel in the body.)
  *
  * Expected request body:
  *   {
+ *     "shared_secret": "<value>",             // required
  *     "email": "advocate@example.com",        // required
  *     "share_link": "https://...",            // optional
  *     "advocate_code": "abc123",              // optional
@@ -26,20 +28,17 @@ exports.main = async (context = {}) => {
   const hsToken = process.env.PRIVATE_APP_ACCESS_TOKEN;
   if (!hsToken) return respond(500, { error: 'PRIVATE_APP_ACCESS_TOKEN not available' });
 
-  const headers = normalizeHeaders(context.headers || context.request?.headers || {});
-  const providedSecret = headers['x-extole-shared-secret'];
-  if (!providedSecret) return respond(401, { error: 'missing x-extole-shared-secret header' });
-
   const body = parseBody(context.body || context.request?.body);
   if (!body || typeof body !== 'object') return respond(400, { error: 'invalid request body' });
-  const { email, share_link, advocate_code, first_name, last_name } = body;
+  const { shared_secret, email, share_link, advocate_code, first_name, last_name } = body;
+  if (!shared_secret) return respond(401, { error: 'missing shared_secret in body' });
   if (!email || typeof email !== 'string') return respond(400, { error: 'email is required' });
 
   const settings = await readAppSettings(hsToken);
   if (!settings) return respond(500, { error: 'unable to read app settings' });
   if (!settings.advocateSyncEnabled) return respond(403, { error: 'advocate sync is disabled' });
   if (!settings.advocateSyncSecret) return respond(403, { error: 'advocate sync is not configured' });
-  if (settings.advocateSyncSecret !== providedSecret) return respond(401, { error: 'invalid shared secret' });
+  if (settings.advocateSyncSecret !== shared_secret) return respond(401, { error: 'invalid shared secret' });
 
   const advocateCodeProp = settings.advocateCodeProperty || 'extole_advocate_code';
   const shareLinkProp = settings.shareLinkProperty || 'extole_share_link';
@@ -73,12 +72,6 @@ exports.main = async (context = {}) => {
   await logSync(hsToken, email, 'updated');
   return respond(200, { contactId: upsertBody.id, action: 'updated' });
 };
-
-function normalizeHeaders(h) {
-  const out = {};
-  for (const [k, v] of Object.entries(h || {})) out[k.toLowerCase()] = v;
-  return out;
-}
 
 function parseBody(body) {
   if (!body) return null;

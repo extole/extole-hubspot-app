@@ -214,7 +214,7 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
   const [deleteCheckCampaign, setDeleteCheckCampaign] = useState<string | null>(null);
 
   // ── Navigation ──
-  type NavTab = 'events' | 'forms' | 'sharelinks' | 'sync' | 'log';
+  type NavTab = 'events' | 'forms' | 'sharelinks' | 'log';
   const [activeTab, setActiveTab] = useState<NavTab>('events');
 
   // Workflow table sort
@@ -458,9 +458,9 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
     fetchLogPage();
   }, [activeTab]);
 
-  // Load advocate sync config when sync tab is first opened
+  // Load advocate sync config when share links tab is first opened
   useEffect(() => {
-    if (activeTab !== 'sync') return;
+    if (activeTab !== 'sharelinks') return;
     if (advocateSyncEnabled !== null || advocateSyncLoading) return;
     setAdvocateSyncLoading(true);
     setAdvocateSyncError(null);
@@ -891,7 +891,6 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
         <Button variant={activeTab === 'events' ? undefined : 'transparent'} onClick={() => setActiveTab('events')}>Configure Events</Button>
         <Button variant={activeTab === 'forms' ? undefined : 'transparent'} onClick={() => setActiveTab('forms')}>Manage Advocate Codes</Button>
         <Button variant={activeTab === 'sharelinks' ? undefined : 'transparent'} onClick={() => setActiveTab('sharelinks')}>Manage Share Links</Button>
-        <Button variant={activeTab === 'sync' ? undefined : 'transparent'} onClick={() => setActiveTab('sync')}>Advocate Sync</Button>
         <Button variant={activeTab === 'log' ? undefined : 'transparent'} onClick={() => setActiveTab('log')}>Settings Log</Button>
       </Flex>
       <Divider />
@@ -1316,14 +1315,10 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
 
           {shareLinkBackfillDone && <Text>Share link generation complete.</Text>}
 
-      </>)}
+          <Divider />
 
-      {/* ══════════════════════════════════════════════════════════════════
-          SECTION 4b — ADVOCATE SYNC (anonymous webhook)
-      ══════════════════════════════════════════════════════════════════ */}
-      {activeTab === 'sync' && (<>
-
-          <Heading>Advocate Sync</Heading>
+          {/* ── Anonymous Advocate Sync (Extole → HubSpot webhook) ── */}
+          <Heading>Anonymous Advocate Sync</Heading>
           <Text>
             Receive advocates from Extole and create matching HubSpot contacts.
             When an anonymous advocate identifies themselves in an Extole share experience
@@ -1345,12 +1340,10 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
               disabled={advocateSyncLoading}
             />
           )}
-          <Spacer />
 
           {advocateSyncEnabled && (
             <>
-              <Divider />
-              <Heading>Webhook configuration</Heading>
+              <Spacer />
               <Text>
                 Paste these values into the Extole HubSpot integration component.
                 The webhook URL is unique to your HubSpot portal.

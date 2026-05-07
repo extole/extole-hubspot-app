@@ -246,6 +246,9 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
   const [advocateSyncLoading, setAdvocateSyncLoading] = useState(false);
   const [advocateSyncError, setAdvocateSyncError] = useState<string | null>(null);
   const [advocateSyncSecretRevealed, setAdvocateSyncSecretRevealed] = useState(false);
+  const [advocateSyncWebhookUrl, setAdvocateSyncWebhookUrl] = useState<string>('');
+  const [advocateSyncWebhookUrlDraft, setAdvocateSyncWebhookUrlDraft] = useState<string>('');
+  const [advocateSyncWebhookUrlSaving, setAdvocateSyncWebhookUrlSaving] = useState(false);
 
   // ── Activity Log ──
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
@@ -472,6 +475,8 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
       setAdvocateSyncSecret(r?.secret || '');
       setAdvocateSyncRotatedAt(r?.rotatedAt || null);
       if (r?.endpointPath) setAdvocateSyncEndpointPath(r.endpointPath);
+      setAdvocateSyncWebhookUrl(r?.webhookUrl || '');
+      setAdvocateSyncWebhookUrlDraft(r?.webhookUrl || '');
     }).catch(() => {
       setAdvocateSyncError('Failed to load advocate sync config');
     }).finally(() => {
@@ -495,6 +500,23 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
       setAdvocateSyncRotatedAt(r?.rotatedAt || null);
     } finally {
       setAdvocateSyncLoading(false);
+    }
+  }
+
+  async function handleSaveAdvocateSyncWebhookUrl() {
+    setAdvocateSyncWebhookUrlSaving(true);
+    setAdvocateSyncError(null);
+    try {
+      const res: any = await runServerlessFunction({
+        name: 'extole_settings',
+        parameters: { action: 'setAdvocateSyncWebhookUrl', webhookUrl: advocateSyncWebhookUrlDraft, actor },
+        propertiesToSend: [],
+      });
+      const r = res?.response;
+      if (r?.error) { setAdvocateSyncError(r.error); return; }
+      setAdvocateSyncWebhookUrl(r?.webhookUrl || '');
+    } finally {
+      setAdvocateSyncWebhookUrlSaving(false);
     }
   }
 
@@ -1335,14 +1357,28 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
               </Text>
               <Spacer />
 
-              <Text format={{ fontWeight: 'bold' }}>Webhook path</Text>
-              <Input
-                name="advocateSyncEndpointPath"
-                label=""
-                value={advocateSyncEndpointPath}
-                readOnly
-                tooltip="Append this path to your HubSpot app's serverless function base URL. Find your full URL on the deployed app's installation page in HubSpot."
-              />
+              <Text format={{ fontWeight: 'bold' }}>Webhook URL</Text>
+              <Text format={{ color: 'medium' }}>
+                Paste the full URL for this app's <Text format={{ fontWeight: 'bold' }}>{advocateSyncEndpointPath}</Text> endpoint
+                (find it on the app's installation page in HubSpot after deploy).
+                This is the URL the Extole integration component will call.
+              </Text>
+              <Flex direction="row" gap="small" align="end">
+                <Input
+                  name="advocateSyncWebhookUrl"
+                  label=""
+                  value={advocateSyncWebhookUrlDraft}
+                  onChange={(v) => setAdvocateSyncWebhookUrlDraft(v)}
+                  placeholder={`https://api-na1.hubspot.com/...${advocateSyncEndpointPath}`}
+                />
+                <Button
+                  onClick={() => handleSaveAdvocateSyncWebhookUrl()}
+                  variant="primary"
+                  disabled={advocateSyncWebhookUrlSaving || advocateSyncWebhookUrlDraft === advocateSyncWebhookUrl}
+                >
+                  Save
+                </Button>
+              </Flex>
               <Spacer />
 
               <Text format={{ fontWeight: 'bold' }}>Shared secret</Text>

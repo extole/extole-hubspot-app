@@ -101,6 +101,9 @@ exports.main = async (context) => {
     case 'setAdvocateSyncEnabled':
       return handleSetAdvocateSyncEnabled(hsToken, params);
 
+    case 'setAdvocateSyncWebhookUrl':
+      return handleSetAdvocateSyncWebhookUrl(hsToken, params);
+
     case 'createLogSchema':
       return handleCreateLogSchema(hsToken);
 
@@ -1172,6 +1175,7 @@ function getDefaultAppSettings() {
     advocateSyncEnabled: false,
     advocateSyncSecret: '',
     advocateSyncSecretRotatedAt: null,
+    advocateSyncWebhookUrl: '',
   };
 }
 
@@ -1282,7 +1286,23 @@ async function handleGetAdvocateSyncConfig(hsToken) {
     secret: s.advocateSyncSecret || '',
     rotatedAt: s.advocateSyncSecretRotatedAt || null,
     endpointPath: ADVOCATE_SYNC_ENDPOINT_PATH,
+    webhookUrl: s.advocateSyncWebhookUrl || '',
   };
+}
+
+async function handleSetAdvocateSyncWebhookUrl(hsToken, { webhookUrl, actor }) {
+  const result = await handleGetAppSettings(hsToken);
+  const settings = { ...(result.settings || {}) };
+  settings.advocateSyncWebhookUrl = (webhookUrl || '').trim();
+  const saveRes = await handleSaveAppSettings(hsToken, { settings });
+  if (saveRes.error) return { error: saveRes.error };
+  await writeLogEntry(hsToken, {
+    action: 'advocate_sync_webhook_url_saved',
+    actor: actor || '',
+    details: settings.advocateSyncWebhookUrl ? '' : '(cleared)',
+    status: 'success',
+  });
+  return { webhookUrl: settings.advocateSyncWebhookUrl };
 }
 
 async function handleRegenerateAdvocateSyncSecret(hsToken, { actor }) {
@@ -1390,6 +1410,7 @@ async function handleCreateLogSchema(hsToken) {
           { label: 'Advocate Sync Enabled', value: 'advocate_sync_enabled', hidden: false, displayOrder: 8 },
           { label: 'Advocate Sync Disabled', value: 'advocate_sync_disabled', hidden: false, displayOrder: 9 },
           { label: 'Advocate Sync Secret Rotated', value: 'advocate_sync_secret_rotated', hidden: false, displayOrder: 10 },
+          { label: 'Advocate Sync Webhook URL Saved', value: 'advocate_sync_webhook_url_saved', hidden: false, displayOrder: 11 },
         ],
       },
       {

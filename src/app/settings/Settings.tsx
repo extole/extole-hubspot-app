@@ -247,6 +247,7 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
   const [advocateSyncError, setAdvocateSyncError] = useState<string | null>(null);
   const [advocateSyncSecretRevealed, setAdvocateSyncSecretRevealed] = useState(false);
   const [advocateSyncWebhookUrl, setAdvocateSyncWebhookUrl] = useState<string>('');
+  const [advocateSyncRegenerateConfirm, setAdvocateSyncRegenerateConfirm] = useState(false);
 
   // ── Activity Log ──
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
@@ -514,6 +515,7 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
       setAdvocateSyncSecret(r?.secret || '');
       setAdvocateSyncRotatedAt(r?.rotatedAt || null);
       setAdvocateSyncSecretRevealed(true);
+      setAdvocateSyncRegenerateConfirm(false);
     } finally {
       setAdvocateSyncLoading(false);
     }
@@ -1351,25 +1353,47 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
                 <Button onClick={() => setAdvocateSyncSecretRevealed(v => !v)} variant="secondary">
                   {advocateSyncSecretRevealed ? 'Hide' : 'Show'}
                 </Button>
-                <Button
-                  onClick={() => handleRegenerateAdvocateSyncSecret()}
-                  variant="destructive"
-                  disabled={advocateSyncLoading}
-                >
-                  Regenerate
-                </Button>
+                {!advocateSyncRegenerateConfirm && (
+                  <Button
+                    onClick={() => setAdvocateSyncRegenerateConfirm(true)}
+                    variant="secondary"
+                    disabled={advocateSyncLoading}
+                  >
+                    Regenerate
+                  </Button>
+                )}
               </Flex>
               {advocateSyncRotatedAt && (
                 <Text format={{ color: 'medium' }}>Last rotated: {formatDate(advocateSyncRotatedAt, locale)}</Text>
               )}
-              <Spacer />
 
-              <Text format={{ fontWeight: 'bold' }}>Regenerating breaks the integration</Text>
-              <Text>
-                Regenerating the secret immediately invalidates the current value.
-                Update the Extole integration component with the new secret right after
-                regenerating, or webhook calls from Extole will fail.
-              </Text>
+              {advocateSyncRegenerateConfirm && (
+                <>
+                  <Spacer />
+                  <Text format={{ fontWeight: 'bold' }}>Regenerating breaks the integration</Text>
+                  <Text>
+                    Regenerating the secret immediately invalidates the current value.
+                    Update the Extole integration component with the new secret right after
+                    regenerating, or webhook calls from Extole will fail.
+                  </Text>
+                  <Flex direction="row" gap="small">
+                    <Button
+                      onClick={() => handleRegenerateAdvocateSyncSecret()}
+                      variant="destructive"
+                      disabled={advocateSyncLoading}
+                    >
+                      {advocateSyncLoading ? 'Regenerating...' : 'Regenerate'}
+                    </Button>
+                    <Button
+                      onClick={() => setAdvocateSyncRegenerateConfirm(false)}
+                      variant="secondary"
+                      disabled={advocateSyncLoading}
+                    >
+                      Cancel
+                    </Button>
+                  </Flex>
+                </>
+              )}
             </>
           )}
 

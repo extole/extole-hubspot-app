@@ -40,17 +40,19 @@ Works with both v2 (`hbspt.forms.create`) and v3 (`<div class="hs-form-frame">`)
 ### Manage Share Links
 Automatically generates Extole share links for contacts and writes them back to a configurable HubSpot contact property.
 
-- **Auto-generate on create:** Creates a share link when a new contact is enrolled.
+- **Auto-generate on create:** Creates a share link when a new contact is enrolled. The workflow uses an `extole_share_link IS_UNKNOWN` enrollment filter so contacts that already have a share link (e.g. from the Anonymous Advocate Sync inbound flow) are not re-enrolled, preventing duplicate-link loops.
 - **Backfill:** Generates share links for existing contacts in bulk.
 - **Campaign targeting:** Optionally scope share links to a specific Extole program/campaign.
 
 #### Anonymous Advocate Sync
-Reverse-direction flow: when an anonymous advocate provides their email in an Extole share experience (i.e. they're not yet a HubSpot contact), Extole calls a webhook here that upserts the matching HubSpot contact and writes their share link + advocate code.
+Reverse-direction flow: when an anonymous advocate provides their email in an Extole share experience (i.e. they're not yet a HubSpot contact), Extole calls a webhook here that upserts the matching HubSpot contact and writes their share link.
 
 - **Public endpoint** at `/api/advocate-sync` on the deployed app (URL is auto-discovered from `/account-info/v3/details` and shown in the Settings page for the admin to copy).
 - **Auth via shared secret** in the request body — HubSpot's serverless gateway strips custom request headers, so the secret travels as `shared_secret` in the JSON payload.
 - **Regenerate** rotates the secret immediately; the Extole integration component must be updated with the new value.
 - **Toggle** in the Anonymous Advocate Sync section enables/disables the sync without deleting the secret.
+- **Writes share link only** — `extole_advocate_code` is reserved for friend-side referred-by tracking (set by the Manage Advocate Codes flow), so the advocate's own code is intentionally not written here.
+- **Pairs with Auto Generate Share Link** — when a new contact is created by this flow, the auto-share-link workflow's `extole_share_link IS_UNKNOWN` enrollment filter prevents it from minting a duplicate.
 
 ---
 

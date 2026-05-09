@@ -1063,7 +1063,31 @@ async function handleToggleAutoShareLink(hsToken, extoleToken, { programLabel, e
       inputFields: [],
       sourceCode: buildAutoShareLinkSourceCode(programLabel || '', extoleToken, hsToken),
     }],
-    enrollmentCriteria: buildEnrollmentCriteria('contact', 'RECORD_CREATED', null, null),
+    enrollmentCriteria: {
+      type: 'EVENT_BASED',
+      shouldReEnroll: false,
+      eventFilterBranches: [{
+        eventTypeId: RECORD_CREATED_EVENT_TYPE_IDS['contact'],
+        operator: 'HAS_COMPLETED',
+        filterBranchType: 'UNIFIED_EVENTS',
+        filterBranchOperator: 'AND',
+        filterBranches: [],
+        filters: [],
+      }],
+      listMembershipFilterBranches: [{
+        filterBranchType: 'AND',
+        filterBranchOperator: 'AND',
+        filterBranches: [],
+        filters: [{
+          filterType: 'PROPERTY',
+          property: 'extole_share_link',
+          operation: {
+            operationType: 'ALL_PROPERTY',
+            operator: 'IS_UNKNOWN',
+          },
+        }],
+      }],
+    },
   };
 
   const createRes = await fetch('https://api.hubapi.com/automation/v4/flows', {
@@ -1098,12 +1122,18 @@ const HS_TOKEN = '${escape(hsToken || '')}';
 exports.main = async (event) => {
   const contactId = event.object.objectId;
 
-  const hsRes = await fetch(HS_API + '/crm/v3/objects/contacts/' + contactId + '?properties=email', {
+  const hsRes = await fetch(HS_API + '/crm/v3/objects/contacts/' + contactId + '?properties=email,' + SHARE_LINK_PROPERTY, {
     headers: { Authorization: 'Bearer ' + HS_TOKEN }
   });
   const contact = await hsRes.json().catch(() => ({}));
   const email = contact.properties && contact.properties.email;
   if (!email) return { outputFields: { status: 'SKIPPED', reason: 'no_email' } };
+
+  // Skip if the contact already has a share link — typically set by the
+  // anonymous advocate sync inbound flow. Avoids minting a duplicate.
+  if (contact.properties && contact.properties[SHARE_LINK_PROPERTY]) {
+    return { outputFields: { status: 'SKIPPED', reason: 'share_link_already_set' } };
+  }
 
   // Look up person in Extole
   const lookupRes = await fetch(EXTOLE_API + '/v5/persons?identity_key_value=' + encodeURIComponent(email), {

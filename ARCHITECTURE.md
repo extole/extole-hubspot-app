@@ -184,23 +184,42 @@ sequenceDiagram
 sequenceDiagram
     participant Adv as Anonymous advocate
     participant Extole as Extole share experience
-    participant Hook as Extole integration component
-    participant Sync as advocate-sync.js\n(public endpoint)
+    participant Ctrl as Extole controller\n(extole_share_link_created)
+    participant WH as Extole webhook\n(hubspot-advocate-sync_dispatch)
+    participant Sync as advocate-sync.js\n(HubSpot endpoint)
     participant HSCRM as HubSpot CRM API
 
-    Adv->>Extole: provides email + gets share link
-    Extole->>Hook: signed_up event fires
-    Hook->>Sync: POST /api/advocate-sync\n{ shared_secret, email,\n  share_link, advocate_code, ... }
+    Adv->>Extole: provides email in share form
+    Extole->>Extole: mints shareable +\nfires advocate_code_created\n(SHAREABLE event_type)
+    Extole->>Ctrl: matches journey=hubspot_advocate_sync_participant
+    Ctrl->>WH: WEBHOOK action\n(email, share_link, first/last name)
+    WH->>Sync: POST /api/advocate-sync\n{ shared_secret, email,\n  share_link, first_name, last_name }
     Sync->>Sync: validate shared_secret\n(read from app settings)
     Sync->>HSCRM: PATCH /crm/v3/objects/contacts/{email}\n?idProperty=email
     alt contact exists
-        HSCRM-->>Sync: 200 OK
+        HSCRM-->>Sync: 200 OK (updated)
     else not found
         Sync->>HSCRM: POST /crm/v3/objects/contacts
         HSCRM-->>Sync: 201 Created
     end
-    Sync-->>Hook: { contactId, action }
+    Sync-->>WH: { contactId, action }
 ```
+
+**Extole-side bundle:** The integration is delivered as an Extole v10 component bundle (`hubspot-advocate-sync`) with this layout:
+
+```
+hubspot-advocate-sync/
+  component.json                      ← outer root (campaign wrapper, INTEGRATION program_type)
+  components/
+    hubspot-advocate-sync/
+      component.json                  ← inner integration (integration-v10.0)
+      evaluatables/request.js         ← runtime body builder
+      components/configuration/       ← config-view-v10.0 settings tab
+    hubspot_advocate_sync_raf/
+      component.json                  ← RAF companion (peer of inner integration)
+```
+
+The RAF companion (`hubspot_advocate_sync_raf`) is tagged `["type:integration", "integration-type:hubspot-advocate-sync"]` and declares the `hubspot_advocate_sync_participant` journey plus the `extole_share_link_created` controller. The controller's trigger is `event_type: SHAREABLE` (no `event_names` filter — SHAREABLE matching does not compare against the step's name), with `selectors: ["TARGET"]` so it matches events targeting the integration's program. Its action's `webhook_id` is resolved at buildtime by walking the parent component's children and finding the WEBHOOK element tagged `internal:app_type=hubspot-advocate-sync` (cross-component element discovery, since the webhook is owned by the inner integration component).
 
 **URL discovery:** The public URL is portal-specific and follows `https://<portalId>.hs-sites-<region>.com/hs/serverless/api/advocate-sync`. `settings.js#constructAdvocateSyncWebhookUrl` calls `/account-info/v3/details` (no extra scope needed) to read `portalId` + `dataHostingLocation` and constructs the URL for display in Settings. The admin copies it into the Extole integration component.
 
@@ -212,15 +231,16 @@ sequenceDiagram
     "shared_secret": "<value>",
     "email": "advocate@example.com",
     "share_link": "https://...",
-    "advocate_code": "abc123",
     "first_name": "Jane",
     "last_name": "Doe"
 }
 ```
 
-Only `shared_secret` and `email` are required. Empty fields are skipped during the upsert (advocate code stays untouched if not provided, etc.).
+Only `shared_secret` and `email` are required. The function writes `share_link` to the configured share-link property (default `extole_share_link`), plus `firstname`/`lastname` if provided. The advocate's own code is **not** written — the dedicated advocate-code property (e.g. `extole_advocate_code`) is reserved for friend-side referred-by tracking populated by the Manage Advocate Codes flow.
 
-**Enabled toggle / regenerate:** The Settings UI exposes an enable/disable toggle plus a regenerate flow with inline confirmation. Regenerating writes a fresh 32-byte hex secret to app settings; old webhook calls fail until the Extole component is updated with the new value. Each event is recorded in the Settings Log (`advocate_sync_enabled`, `advocate_sync_disabled`, `advocate_sync_secret_rotated`, `advocate_sync` per inbound call).
+**Loop prevention with Auto Generate Share Link:** When this flow creates a brand-new contact, HubSpot's RECORD_CREATED event would normally enroll it into the Auto Generate Share Link workflow, which would mint a second (different) share link and overwrite the one we just stored. The auto-share-link workflow's enrollment criteria therefore include a `listMembershipFilterBranches` filter requiring `extole_share_link IS_UNKNOWN` — contacts that already have a share link from the anonymous flow are not enrolled.
+
+**Enabled toggle / regenerate:** The Settings UI exposes an enable/disable toggle plus a regenerate flow with inline confirmation. Regenerating writes a fresh 32-byte hex secret to app settings; old webhook calls fail until the Extole component is updated with the new value. Each event is recorded in the Settings Log (`advocate_sync_enabled`, `advocate_sync_disabled`, `advocate_sync_secret_rotated`, `advocate_sync_from_extole` per inbound call).
 
 ---
 

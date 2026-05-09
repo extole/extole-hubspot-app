@@ -193,7 +193,41 @@ To generate share links for contacts that existed before the app was installed:
 
 ---
 
-## Step 5 — Enable the CRM Card
+## Step 5 — Anonymous Advocate Sync (optional)
+
+This step wires the reverse direction: when an anonymous person provides their email in an Extole share experience, Extole calls a HubSpot endpoint that upserts the matching contact and writes their share link. Skip this step if the client doesn't run anonymous share flows.
+
+### 5a — Get the webhook URL and shared secret from HubSpot
+
+In the app's **Manage Share Links** tab → **Anonymous Advocate Sync** section:
+
+1. Click **Enable** to activate the endpoint and generate a shared secret
+2. Copy the **Webhook URL** (auto-discovered, format `https://<portalId>.hs-sites-<region>.com/hs/serverless/api/advocate-sync`)
+3. Copy the **Shared Secret**
+
+### 5b — Confirm the Extole integration is available
+
+The Extole-side **Hubspot Advocate Sync** integration is provisioned by the Extole platform team for the client's account. Confirm in the client's Extole account at **my.extole.com → Partners → Hubspot Advocate Sync** that the integration is listed.
+
+The integration ships with:
+- A Partners-page integration entry with **Configuration** settings (Webhook URL, Shared Secret)
+- An RAF companion that listens for `advocate_code_created` (SHAREABLE) events across the client's RAF campaigns and dispatches to the configured HubSpot endpoint
+
+### 5c — Configure the integration
+
+In **my.extole.com → Partners → Hubspot Advocate Sync → Configuration**:
+
+1. Paste the **Webhook URL** from step 5a into the `Webhook URL` setting
+2. Paste the **Shared Secret** from step 5a into the `Shared Secret` setting
+3. Save
+
+The integration is now live. Any `advocate_code_created` event in any RAF campaign in this Extole account will dispatch to HubSpot's endpoint, which upserts the contact by email and writes the share link.
+
+> **Note:** When this flow creates a brand-new contact, the **Auto Generate Share Link** workflow's enrollment criteria (`extole_share_link IS_UNKNOWN`) prevents it from minting a duplicate share link. No additional configuration needed.
+
+---
+
+## Step 6 — Enable the CRM Card
 
 The Extole app includes a sidebar card on the Contact record that shows the captured advocate code and HubSpot visitor ID.
 
@@ -208,7 +242,7 @@ The card will show "No referral data captured" for contacts without attribution 
 
 ---
 
-## Step 6 — Verify End-to-End
+## Step 7 — Verify End-to-End
 
 ### Verify event delivery
 

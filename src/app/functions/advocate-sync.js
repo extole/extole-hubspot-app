@@ -3,7 +3,9 @@
  *
  * Receives a POST from Extole when an anonymous advocate identifies themselves
  * (provides email, gets a share link). Upserts a HubSpot contact by email and
- * writes the share link / advocate code to the configured contact properties.
+ * writes the share link to the configured contact property. The advocate code
+ * is intentionally NOT written — that property is reserved for friend-side
+ * "was referred by" tracking, set by a different flow.
  *
  * Auth: shared secret in the request body as `shared_secret`, validated against
  * the value stored in app settings. Rotating the secret in HubSpot Settings
@@ -15,7 +17,6 @@
  *     "shared_secret": "<value>",             // required
  *     "email": "advocate@example.com",        // required
  *     "share_link": "https://...",            // optional
- *     "advocate_code": "abc123",              // optional
  *     "first_name": "Jane",                   // optional
  *     "last_name": "Doe"                      // optional
  *   }
@@ -28,9 +29,10 @@ exports.main = async (context = {}) => {
   const hsToken = process.env.PRIVATE_APP_ACCESS_TOKEN;
   if (!hsToken) return respond(500, { error: 'PRIVATE_APP_ACCESS_TOKEN not available' });
 
-  const body = parseBody(context.body || context.request?.body);
+  const rawBody = context.body || context.request?.body;
+  const body = parseBody(rawBody);
   if (!body || typeof body !== 'object') return respond(400, { error: 'invalid request body' });
-  const { shared_secret, email, share_link, advocate_code, first_name, last_name } = body;
+  const { shared_secret, email, share_link, first_name, last_name } = body;
   if (!shared_secret) return respond(401, { error: 'missing shared_secret in body' });
   if (!email || typeof email !== 'string') return respond(400, { error: 'email is required' });
 
@@ -40,13 +42,11 @@ exports.main = async (context = {}) => {
   if (!settings.advocateSyncSecret) return respond(403, { error: 'advocate sync is not configured' });
   if (settings.advocateSyncSecret !== shared_secret) return respond(401, { error: 'invalid shared secret' });
 
-  const advocateCodeProp = settings.advocateCodeProperty || 'extole_advocate_code';
   const shareLinkProp = settings.shareLinkProperty || 'extole_share_link';
 
   const props = {};
   if (first_name) props.firstname = first_name;
   if (last_name) props.lastname = last_name;
-  if (advocate_code) props[advocateCodeProp] = advocate_code;
   if (share_link) props[shareLinkProp] = share_link;
 
   const upsertRes = await fetch(`${HS_API_BASE}/crm/v3/objects/contacts/${encodeURIComponent(email)}?idProperty=email`, {
@@ -131,7 +131,7 @@ async function logSync(hsToken, email, action) {
       body: JSON.stringify({
         properties: {
           eal_timestamp: new Date().toISOString(),
-          eal_action: 'advocate_sync',
+          eal_action: 'advocate_sync_from_extole',
           eal_actor: 'extole webhook',
           eal_details: `${email} (${action})`,
           eal_status: 'success',

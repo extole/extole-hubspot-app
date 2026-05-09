@@ -66,8 +66,22 @@ exports.main = async (context) => {
 
   // Include any additional fields from inputFields (admin-configured extras)
   const inputFields = body.inputFields || {};
+
+  // Optional guard: if the workflow action specifies skipIfPropertySet=<propertyName>,
+  // skip the dispatch when that property is already populated on the contact.
+  // Use case: Auto Generate Share Link workflow firing on a contact that was just
+  // created by the anonymous advocate sync (which already wrote extole_share_link).
+  const skipIfPropertySet = inputFields.skipIfPropertySet;
+  if (skipIfPropertySet && properties[skipIfPropertySet]) {
+    return {
+      status: 'SUCCESS',
+      skipped: true,
+      reason: `${skipIfPropertySet} already set on contact; skipping dispatch.`,
+    };
+  }
+
   for (const [key, value] of Object.entries(inputFields)) {
-    if (key !== 'eventName' && value != null) {
+    if (key !== 'eventName' && key !== 'skipIfPropertySet' && value != null) {
       data[key] = value;
     }
   }

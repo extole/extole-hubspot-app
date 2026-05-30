@@ -397,6 +397,11 @@ async function handleCreateWorkflow(hsToken, extoleToken, { eventName, triggerOb
       type: 'CUSTOM_CODE',
       runtime: 'NODE20X',
       inputFields: [],
+      outputProperties: [
+        { name: 'status',     type: 'STRING' },
+        { name: 'httpStatus', type: 'STRING' },
+        { name: 'extoleId',   type: 'STRING' },
+      ],
       sourceCode,
     }],
     enrollmentCriteria: buildEnrollmentCriteria(obj, triggerType, triggerProperty, triggerToValue),
@@ -502,7 +507,7 @@ async function handleGetWorkflowConfig(hsToken, { flowId }) {
   return { config: config ? { ...config, ...triggerConfig } : null };
 }
 
-async function handleUpdateWorkflow(hsToken, extoleToken, { flowId, eventName, triggerObject, triggerType, triggerProperty, triggerToValue, fieldMappings, includeContactData }) {
+async function handleUpdateWorkflow(hsToken, extoleToken, { flowId, eventName, triggerObject, triggerType, triggerProperty, triggerToValue, fieldMappings, includeContactData, actor }) {
   if (!extoleToken) return { error: 'EXTOLE_API_TOKEN secret not configured' };
   if (!flowId) return { error: 'flowId is required' };
   if (!eventName) return { error: 'eventName is required' };
@@ -526,7 +531,11 @@ async function handleUpdateWorkflow(hsToken, extoleToken, { flowId, eventName, t
     : existing.enrollmentCriteria;
 
   const updatedActions = (existing.actions || []).map((a, i) =>
-    i === 0 ? { ...a, sourceCode } : a
+    i === 0 ? { ...a, sourceCode, outputProperties: [
+      { name: 'status',     type: 'STRING' },
+      { name: 'httpStatus', type: 'STRING' },
+      { name: 'extoleId',   type: 'STRING' },
+    ]} : a
   );
 
   const putBody = {
@@ -564,6 +573,13 @@ async function handleUpdateWorkflow(hsToken, extoleToken, { flowId, eventName, t
     });
     return { error: responseData.message || `HTTP ${putRes.status}`, details: responseData };
   }
+
+  await writeLogEntry(hsToken, {
+    action: 'workflow_updated',
+    actor: actor || '',
+    details: responseData.name || eventName || '',
+    status: 'success',
+  });
 
   return { workflowId: responseData.id, name: responseData.name };
 }
@@ -667,23 +683,32 @@ function buildWorkflowSourceCode(eventName, crmObjectType, fieldMappings, extole
     'https://api.hubapi.com/crm/v4/objects/' + CRM_TYPE + '/' + objectId + '/associations/contacts',
     { headers: { Authorization: 'Bearer ' + HS_TOKEN } }
   );
+  console.log('[extole] assoc lookup status:', assocRes.status);
   if (assocRes.ok) {
     const assocBody = await assocRes.json().catch(() => ({}));
     const results = assocBody.results || [];
+    console.log('[extole] assoc results count:', results.length);
     const primary = results.find(r => r.associationTypes && r.associationTypes.some(t => t.label === 'Primary')) || results[0];
     if (primary) {
       const contactRes = await fetch(
         'https://api.hubapi.com/crm/v3/objects/contacts/' + primary.toObjectId + '?properties=email,firstname,lastname,extole_advocate_code',
         { headers: { Authorization: 'Bearer ' + HS_TOKEN } }
       );
+      console.log('[extole] contact fetch status:', contactRes.status);
       if (contactRes.ok) {
         const cp = (await contactRes.json().catch(() => ({}))).properties || {};
+        console.log('[extole] contact email found:', !!cp.email);
         if (cp.email && !data.email) data.email = cp.email;
         if (cp.firstname && !data.first_name) data.first_name = cp.firstname;
         if (cp.lastname && !data.last_name) data.last_name = cp.lastname;
         if (cp.extole_advocate_code && !data.advocate_code) data.advocate_code = cp.extole_advocate_code;
       }
+    } else {
+      console.log('[extole] no associated contact found');
     }
+  } else {
+    const assocErr = await assocRes.text().catch(() => '');
+    console.log('[extole] assoc lookup failed:', assocRes.status, assocErr.slice(0, 200));
   }`;
 
   return `
@@ -709,6 +734,7 @@ exports.main = async (event) => {
     { headers: { Authorization: 'Bearer ' + HS_TOKEN } }
   );
   const hsBody = await hsRes.json().catch(() => ({}));
+  console.log('[extole] crm fetch status:', hsRes.status, 'props:', JSON.stringify(hsBody.properties));
   const props = hsBody.properties || {};
 
   // Build Extole event data — email is always included as identity
@@ -720,8 +746,10 @@ exports.main = async (event) => {
     if (value != null && value !== '') data[m.extoleKey] = value;
   }
 ${contactLookupCode}
+  console.log('[extole] firing event:', EVENT_NAME, 'data:', JSON.stringify(data));
+
   // Fire event to Extole
-  const extoleRes = await fetch('https://api.extole.io/v5/events', {
+  const extoleRes = await fetch('https://api.extole.io/v6/async-events', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + EXTOLE_TOKEN, 'Content-Type': 'application/json', 'x-extole-app-type': 'extole-hubspot-app' },
     body: JSON.stringify({ event_name: EVENT_NAME, data })
@@ -729,6 +757,8 @@ ${contactLookupCode}
 
   let extoleBody;
   try { extoleBody = await extoleRes.json(); } catch { extoleBody = null; }
+
+  console.log('[extole] response:', extoleRes.status, JSON.stringify(extoleBody));
 
   return {
     outputFields: {
@@ -1461,8 +1491,9 @@ async function handleCreateLogSchema(hsToken) {
           { label: 'Auto Share Link Enabled', value: 'auto_share_link_enabled', hidden: false, displayOrder: 2 },
           { label: 'Auto Share Link Disabled', value: 'auto_share_link_disabled', hidden: false, displayOrder: 3 },
           { label: 'Workflow Created', value: 'workflow_created', hidden: false, displayOrder: 4 },
-          { label: 'Workflow Deleted', value: 'workflow_deleted', hidden: false, displayOrder: 5 },
-          { label: 'Workflow Toggled', value: 'workflow_toggled', hidden: false, displayOrder: 6 },
+          { label: 'Workflow Updated', value: 'workflow_updated', hidden: false, displayOrder: 5 },
+          { label: 'Workflow Deleted', value: 'workflow_deleted', hidden: false, displayOrder: 6 },
+          { label: 'Workflow Toggled', value: 'workflow_toggled', hidden: false, displayOrder: 7 },
           { label: 'Advocate Sync', value: 'advocate_sync', hidden: false, displayOrder: 7 },
           { label: 'Advocate Sync Enabled', value: 'advocate_sync_enabled', hidden: false, displayOrder: 8 },
           { label: 'Advocate Sync Disabled', value: 'advocate_sync_disabled', hidden: false, displayOrder: 9 },

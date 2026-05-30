@@ -107,13 +107,13 @@ sequenceDiagram
     WF->>WFCode: workflow executes inline custom code\n(EXTOLE_TOKEN + HS_TOKEN embedded as constants)
     WFCode->>HSCRM: GET /crm/v3/objects/{type}/{id}\n(fetch email + mapped properties)
     HSCRM-->>WFCode: contact properties
-    WFCode->>Extole: POST /v5/events\n{ event_name, data: { ...fields, app_type: hubspot_crm } }
+    WFCode->>Extole: POST /v5/events\n{ event_name, data: { ...fields, app_type: extole-hubspot-app } }
     Extole-->>WFCode: HTTP response
 ```
 
 **Workflow structure:** Each event rule creates one HubSpot workflow with a `CUSTOM_CODE` action step. The generated JavaScript is self-contained — both the Extole token and the HubSpot token are embedded as literal constants at workflow creation time by `settings.js`. No callback to an app serverless function occurs at dispatch time.
 
-**Identity payload:** The generated code always fetches and includes `email` plus any configured field mappings (e.g. `contact_id`, `first_name`, `last_name`). `app_type: hubspot_crm` is always appended.
+**Identity payload:** The generated code always fetches and includes `email` plus any configured field mappings (e.g. `contact_id`, `first_name`, `last_name`). `app_type: extole-hubspot-app` is always appended.
 
 **Token rotation:** Because tokens are embedded at creation time, updating the Extole API token in Settings does not automatically update existing workflow custom code. Use **Update Workflow** (or delete and recreate) to push a new token into existing workflows.
 

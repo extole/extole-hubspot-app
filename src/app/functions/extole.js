@@ -1,7 +1,7 @@
 /**
  * Extole API client — shared module for all serverless functions.
  *
- * Endpoint: POST https://api.extole.io/v5/events
+ * Endpoint: POST https://api.extole.io/v6/async-events
  * Auth: Bearer token from EXTOLE_API_TOKEN secret
  * Payload: { event_name, data: { ...fields, app_type: "hubspot_crm" } }
  */
@@ -22,7 +22,7 @@ async function fireEvent(token, eventName, data) {
     data: { ...data, app_type: 'hubspot_crm' },
   };
 
-  const response = await fetch(`${EXTOLE_API_BASE}/v5/events`, {
+  const response = await fetch(`${EXTOLE_API_BASE}/v6/async-events`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,

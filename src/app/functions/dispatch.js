@@ -19,7 +19,7 @@ async function fireEvent(token, eventName, data) {
     event_name: eventName,
     data: { ...data, app_type: 'extole-hubspot-app' },
   };
-  const response = await fetch(`${EXTOLE_API_BASE}/v5/events`, {
+  const response = await fetch(`${EXTOLE_API_BASE}/v6/async-events`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,

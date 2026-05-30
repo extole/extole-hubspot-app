@@ -30,7 +30,7 @@ hubspot.extend(({ runServerlessFunction, context }) => (
     runServerlessFunction={runServerlessFunction}
     portalId={context.portal.id}
     locale={context.user?.locale}
-    actor={context.user?.email ?? ''}
+    actor={context.user?.email || (context.user?.firstName ? `${context.user.firstName} ${context.user.lastName ?? ''}`.trim() : '') || String(context.user?.id ?? '')}
   />
 ));
 
@@ -67,6 +67,8 @@ type SavedFormSettings = {
   formTargeting: 'all' | 'specific';
   selectedFormIds: string[];
 };
+
+const STANDARD_OBJECT_TYPES = ['contact', 'deal', 'company', 'ticket', 'quote'];
 
 // ─── Default field mappings ───────────────────────────────────────────────────
 
@@ -124,6 +126,7 @@ const LOG_ACTION_LABELS: Record<string, string> = {
   auto_share_link_enabled:       'Auto Share Link Enabled',
   auto_share_link_disabled:      'Auto Share Link Disabled',
   workflow_created:              'Workflow Created',
+  workflow_updated:              'Workflow Updated',
   workflow_deleted:              'Workflow Deleted',
   workflow_toggled:              'Workflow Toggled',
   advocate_sync:                 'Advocate Sync',
@@ -817,7 +820,7 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
         triggerProperty: eventForm.triggerProperty || undefined,
         triggerToValue: eventForm.triggerToValue || undefined,
         fieldMappings: eventForm.fieldMappings,
-        includeContactData: eventForm.includeContactData,
+        includeContactData: !STANDARD_OBJECT_TYPES.includes(eventForm.triggerObject) ? true : eventForm.includeContactData,
         enabled,
         actor,
       },
@@ -849,7 +852,8 @@ function ExtoleSettings({ runServerlessFunction, portalId, locale, actor }: {
         triggerProperty: eventForm.triggerProperty || undefined,
         triggerToValue: eventForm.triggerToValue || undefined,
         fieldMappings: eventForm.fieldMappings,
-        includeContactData: eventForm.includeContactData,
+        includeContactData: !STANDARD_OBJECT_TYPES.includes(eventForm.triggerObject) ? true : eventForm.includeContactData,
+        actor,
       },
       propertiesToSend: [],
     }).then((res) => {
@@ -1722,7 +1726,7 @@ function EventForm({
         );
       })()}
 
-      {form.triggerObject !== 'contact' && (
+      {form.triggerObject !== 'contact' && STANDARD_OBJECT_TYPES.includes(form.triggerObject) && (
         <>
           <Divider />
           <Toggle
@@ -1732,6 +1736,12 @@ function EventForm({
             onChange={(val) => onChange({ ...form, includeContactData: val })}
           />
           <Text>When enabled, the event payload will include the primary associated contact's email, name, and advocate code.</Text>
+        </>
+      )}
+      {!STANDARD_OBJECT_TYPES.includes(form.triggerObject) && (
+        <>
+          <Divider />
+          <Text>The primary associated contact's email, name, and advocate code will automatically be included so Extole can identify the person.</Text>
         </>
       )}
 
